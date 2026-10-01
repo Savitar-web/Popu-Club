@@ -7,6 +7,7 @@ export default function ProfileButton() {
   const [email, setEmail] = useState('')
   const [age, setAge] = useState('')
   const [profilePic, setProfilePic] = useState('/loguito.png')
+  const [role, setRole] = useState('user')
   const [theme, setTheme] = useState<'light' | 'dark'>('light')
   const menuRef = useRef<HTMLDivElement>(null)
 
@@ -15,12 +16,27 @@ export default function ProfileButton() {
     const storedEmail = localStorage.getItem('email')
     const storedAge = localStorage.getItem('age')
     const storedPic = localStorage.getItem('profilePic')
+    const storedRole = localStorage.getItem('role') || 'user'
     const savedTheme = (localStorage.getItem('theme') as 'light' | 'dark') || 'light'
+
+    // También intentar desde currentUser por si role/pic solo están ahí
+    try {
+      const raw = localStorage.getItem('currentUser')
+      if (raw) {
+        const u = JSON.parse(raw)
+        if (u.username && !storedUsername) setUsername(u.username)
+        if (u.email && !storedEmail) setEmail(u.email)
+        if (u.age && !storedAge) setAge(String(u.age))
+        if (u.profilePic && !storedPic) setProfilePic(u.profilePic)
+        if (u.role) setRole(u.role)
+      }
+    } catch { /* ignore */ }
 
     if (storedUsername) setUsername(storedUsername)
     if (storedEmail) setEmail(storedEmail)
     if (storedAge) setAge(storedAge)
     if (storedPic) setProfilePic(storedPic)
+    if (storedRole) setRole(storedRole)
 
     setTheme(savedTheme)
     document.documentElement.setAttribute('data-theme', savedTheme)
@@ -128,6 +144,11 @@ export default function ProfileButton() {
           <p style={{ margin: '4px 0' }}>Usuario: {username || '—'}</p>
           <p style={{ margin: '4px 0' }}>Email: {email || '—'}</p>
           <p style={{ margin: '4px 0' }}>Edad: {age || '—'}</p>
+          {role === 'admin' && (
+            <p style={{ margin: '4px 0', color: '#c0392b', fontWeight: 'bold', fontSize: 12 }}>
+              🛡 Admin
+            </p>
+          )}
 
           <button
             onClick={toggleTheme}
@@ -155,6 +176,27 @@ export default function ProfileButton() {
           >
             {theme === 'light' ? '🌙 Modo oscuro' : '☀️ Modo claro'}
           </button>
+
+          {role === 'admin' && (
+            <Link
+              to="/admin"
+              onClick={() => setShowDetails(false)}
+              style={{
+                display: 'block',
+                marginTop: 12,
+                padding: '10px 0',
+                textAlign: 'center',
+                background: 'linear-gradient(135deg, #2c3e50, #34495e)',
+                color: '#FFD700',
+                textDecoration: 'none',
+                fontWeight: 'bold',
+                borderRadius: 8,
+                border: '2px solid #FFD700',
+              }}
+            >
+              ⚙️ Panel admin
+            </Link>
+          )}
 
           <Link
             to="/profile"

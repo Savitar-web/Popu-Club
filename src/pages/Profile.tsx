@@ -1,10 +1,11 @@
 import { useState, useEffect, useCallback } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, Link } from 'react-router-dom'
 import Header from '../components/Header'
 import Footer from '../components/Footer'
 import ProfileButton from '../components/ProfileButton'
 import Cropper from 'react-easy-crop'
 import type { Area } from 'react-easy-crop'
+import { supabase, isSupabaseConfigured } from '../lib/supabase'
 
 export default function Profile() {
   const navigate = useNavigate()
@@ -12,7 +13,6 @@ export default function Profile() {
   const [editMode, setEditMode] = useState(false)
   const [confirmLogout, setConfirmLogout] = useState(false)
   const [theme, setTheme] = useState<'light' | 'dark'>('light')
-
   const [form, setForm] = useState({
     username: '',
     age: '',
@@ -20,7 +20,22 @@ export default function Profile() {
     description: '',
     banner: '',
     profilePic: '/loguito.png',
+    showLikes: true,
+    showComments: true,
+    showFolders: true,
   })
+
+  const [myComments, setMyComments] = useState<any[]>([])
+  const [likesCh, setLikesCh] = useState<any[]>([])
+  const [likesCm, setLikesCm] = useState<any[]>([])
+  const [folders, setFolders] = useState<any[]>([])
+  const [folderName, setFolderName] = useState('')
+  const [folderItems, setFolderItems] = useState<Record<string, any[]>>({})
+  const [activeFolder, setActiveFolder] = useState<string | null>(null)
+  const [allComics, setAllComics] = useState<any[]>([])
+  const [comicSearch, setComicSearch] = useState('')
+  const [wall, setWall] = useState<any[]>([])
+  const [modal, setModal] = useState<{ title: string; body: string; onConfirm?: () => void } | null>(null)
 
   const [showCropper, setShowCropper] = useState(false)
   const [cropType, setCropType] = useState<'avatar' | 'banner'>('avatar')
@@ -28,45 +43,139 @@ export default function Profile() {
   const [crop, setCrop] = useState({ x: 0, y: 0 })
   const [zoom, setZoom] = useState(1)
   const [croppedAreaPixels, setCroppedAreaPixels] = useState<Area | null>(null)
-
-  const [originalWidth, setOriginalWidth] = useState(0)
-  const [originalHeight, setOriginalHeight] = useState(0)
-  const [resizeWidth, setResizeWidth] = useState(0)
-  const [resizeHeight, setResizeHeight] = useState(0)
   const [livePreview, setLivePreview] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [lightbox, setLightbox] = useState<string | null>(null)
 
-  const persistUser = (updated: any) => {
+  const persistLocal = (updated: any) => {
     localStorage.setItem('currentUser', JSON.stringify(updated))
     localStorage.setItem('username', updated.username || '')
-    localStorage.setItem('age', updated.age || '')
-    localStorage.setItem('profilePic', updated.profilePic || '/loguito.png')
-
-    const users = JSON.parse(localStorage.getItem('users') || '[]')
-    const idx = users.findIndex((u: any) => u.email === updated.email)
-    if (idx !== -1) {
-      users[idx] = updated
-      localStorage.setItem('users', JSON.stringify(users))
-    }
-
+    localStorage.setItem('age', updated.age != null ? String(updated.age) : '')
+    localStorage.setItem('profilePic', updated.profilePic || updated.avatar_url || '/loguito.png')
+    localStorage.setItem('role', updated.role || 'user')
     window.dispatchEvent(new Event('profileUpdated'))
   }
 
   useEffect(() => {
-    const current = localStorage.getItem('currentUser')
-    if (!current) {
-      navigate('/login')
-      return
-    }
-    const parsed = JSON.parse(current)
-    setUser(parsed)
-    setForm({
-      username: parsed.username || '',
-      age: parsed.age || '',
-      showAge: parsed.showAge !== false,
-      description: parsed.description || '',
-      banner: parsed.banner || '',
-      profilePic: parsed.profilePic || '/loguito.png',
-    })
+    ;(async () => {
+      if (!isSupabaseConfigured || !supabase) {
+        const current = localStorage.getItem('currentUser')
+        if (!current) { navigate('/login'); return }
+        const parsed = JSON.parse(current)
+        setUser(parsed)
+        setForm((f) => ({
+          ...f,
+          username: parsed.username || '',
+          age: parsed.age != null ? String(parsed.age) : '',
+          showAge: parsed.showAge !== false,
+          description: parsed.description || '',
+          banner: parsed.banner || '',
+          profilePic: parsed.profilePic || '/loguito.png',
+        }))
+        return
+      }
+
+      const { data: { user: authUser } } = await supabase.auth.getUser()
+      if (!authUser) { navigate('/login'); return }
+
+      const { data: profile } = await supabase.from('profiles').select('*').eq('id', authUser.id).single()
+      const u = {
+        id: authUser.id,
+        email: authUser.email,
+        username: profile?.username || '',
+        age: profile?.age ?? '',
+        showAge: profile?.show_age !== false,
+        description: profile?.description || '',
+        banner: profile?.banner || '',
+        profilePic: profile?.avatar_url || '/loguito.png',
+        role: profile?.role || 'user',
+        showLikes: profile?.show_likes !== false,
+        showComments: profile?.show_comments !== false,
+        showFolders: profile?.show_folders !== false,
+      }
+      setUser(u)
+      setForm({
+        username: u.username,
+        age: String(u.age ?? ''),
+        showAge: u.showAge,
+        description: u.description,
+        banner: u.banner,
+        profilePic: u.profilePic,
+        showLikes: u.showLikes,
+        showComments: u.showComments,
+        showFolders: u.showFolders,
+      })
+      persistLocal(u)
+
+      const { data: cm } = await supabase
+        .from('comments')
+        .select('id, content, created_at, chapter_id, chapters(title, number, comic_id, comics(title, cover_url))')
+        .eq('user_id', authUser.id)
+        .order('created_at', { ascending: false })
+        .limit(40)
+      setMyComments(cm || [])
+
+      const { data: lk } = await supabase
+        .from('likes')
+        .select('id, created_at, chapter_id, chapters(title, number, comic_id, comics(title, cover_url))')
+        .eq('user_id', authUser.id)
+        .order('created_at', { ascending: false })
+        .limit(40)
+      setLikesCh(lk || [])
+
+      const { data: clk } = await supabase
+        .from('comment_likes')
+        .select(`
+          id, created_at, comment_id,
+          comments(
+            content, chapter_id, user_id,
+            profiles:user_id(username, avatar_url),
+            chapters(title, number, comic_id, comics(title))
+          )
+        `)
+        .eq('user_id', authUser.id)
+        .order('created_at', { ascending: false })
+        .limit(40)
+      setLikesCm(clk || [])
+
+      const { data: fd } = await supabase
+        .from('favorite_folders')
+        .select('*')
+        .eq('user_id', authUser.id)
+        .order('created_at', { ascending: true })
+      setFolders(fd || [])
+      const items: Record<string, any[]> = {}
+      for (const f of fd || []) {
+        const { data: it } = await supabase
+          .from('favorite_items')
+          .select('id, comic_id, comics(id, title, cover_url)')
+          .eq('folder_id', f.id)
+        items[f.id] = it || []
+      }
+      setFolderItems(items)
+
+      const { data: arcs } = await supabase
+        .from('comics')
+        .select('id, title, cover_url, status')
+        .neq('status', 'draft')
+        .order('title')
+      setAllComics(arcs || [])
+
+      const { data: wallRaw } = await supabase
+        .from('profile_wall')
+        .select('id, content, created_at, author_id, is_disabled')
+        .eq('profile_id', authUser.id)
+        .order('created_at', { ascending: false })
+        .limit(50)
+      const posts = wallRaw || []
+      const aIds = [...new Set(posts.map((x: any) => x.author_id).filter(Boolean))]
+      const authors: Record<string, any> = {}
+      if (aIds.length) {
+        const { data: aps } = await supabase.from('profiles').select('id, username, avatar_url').in('id', aIds)
+        ;(aps || []).forEach((a: any) => { authors[a.id] = a })
+      }
+      setWall(posts.map((w: any) => ({ ...w, profiles: authors[w.author_id] || null })))
+    })()
 
     const savedTheme = (localStorage.getItem('theme') as 'light' | 'dark') || 'light'
     setTheme(savedTheme)
@@ -78,129 +187,47 @@ export default function Profile() {
     localStorage.setItem('theme', theme)
   }, [theme])
 
-  useEffect(() => {
-    if (!imageSrc) return
-    const img = new Image()
-    img.src = imageSrc
-    img.onload = () => {
-      setOriginalWidth(img.width)
-      setOriginalHeight(img.height)
-
-      if (cropType === 'banner') {
-        setResizeWidth(1200)
-        setResizeHeight(300)
-      } else {
-        const side = Math.max(512, Math.min(img.width, img.height))
-        setResizeWidth(side)
-        setResizeHeight(side)
-      }
-    }
-  }, [imageSrc, cropType])
-
-  const onCropComplete = useCallback((_: Area, pixels: Area) => {
-    setCroppedAreaPixels(pixels)
-  }, [])
+  const onCropComplete = useCallback((_: Area, pixels: Area) => setCroppedAreaPixels(pixels), [])
 
   useEffect(() => {
-    if (!imageSrc || !croppedAreaPixels || resizeWidth <= 0 || resizeHeight <= 0) {
-      setLivePreview(null)
-      return
-    }
-
-    const generate = async () => {
+    if (!imageSrc || !croppedAreaPixels) { setLivePreview(null); return }
+    const run = async () => {
       const image = new Image()
       image.src = imageSrc
       await new Promise((r) => (image.onload = r))
-
-      const cropW = croppedAreaPixels.width
-      const cropH = croppedAreaPixels.height
-
-      const tempCanvas = document.createElement('canvas')
-      const tempCtx = tempCanvas.getContext('2d')
-      if (!tempCtx) return
-
+      const temp = document.createElement('canvas')
+      const ctx = temp.getContext('2d')
+      if (!ctx) return
       if (cropType === 'avatar') {
-        const size = Math.min(cropW, cropH)
-        tempCanvas.width = size
-        tempCanvas.height = size
-        tempCtx.beginPath()
-        tempCtx.arc(size / 2, size / 2, size / 2, 0, Math.PI * 2)
-        tempCtx.closePath()
-        tempCtx.clip()
-        tempCtx.drawImage(
-          image,
-          croppedAreaPixels.x,
-          croppedAreaPixels.y,
-          cropW,
-          cropH,
-          0, 0, size, size
-        )
+        const size = Math.min(croppedAreaPixels.width, croppedAreaPixels.height)
+        temp.width = size
+        temp.height = size
+        ctx.beginPath()
+        ctx.arc(size / 2, size / 2, size / 2, 0, Math.PI * 2)
+        ctx.closePath()
+        ctx.clip()
+        ctx.drawImage(image, croppedAreaPixels.x, croppedAreaPixels.y, croppedAreaPixels.width, croppedAreaPixels.height, 0, 0, size, size)
       } else {
-        tempCanvas.width = cropW
-        tempCanvas.height = cropH
-        tempCtx.drawImage(
-          image,
-          croppedAreaPixels.x,
-          croppedAreaPixels.y,
-          cropW,
-          cropH,
-          0, 0, cropW, cropH
-        )
+        temp.width = croppedAreaPixels.width
+        temp.height = croppedAreaPixels.height
+        ctx.drawImage(image, croppedAreaPixels.x, croppedAreaPixels.y, croppedAreaPixels.width, croppedAreaPixels.height, 0, 0, temp.width, temp.height)
       }
-
-      let finalW = resizeWidth
-      let finalH = resizeHeight
-
-      if (cropType === 'avatar') {
-        finalW = Math.max(resizeWidth, 512)
-        finalH = Math.max(resizeHeight, 512)
-      } else {
-        finalW = Math.max(resizeWidth, 1200)
-        finalH = Math.round(finalW / 4)
-      }
-
-      const finalCanvas = document.createElement('canvas')
-      finalCanvas.width = finalW
-      finalCanvas.height = finalH
-      const finalCtx = finalCanvas.getContext('2d')
-      if (!finalCtx) return
-
-      finalCtx.imageSmoothingEnabled = true
-      finalCtx.imageSmoothingQuality = 'high'
-      finalCtx.drawImage(tempCanvas, 0, 0, finalW, finalH)
-
-      setLivePreview(finalCanvas.toDataURL('image/jpeg', 0.95))
+      const final = document.createElement('canvas')
+      final.width = cropType === 'avatar' ? 512 : 1200
+      final.height = cropType === 'avatar' ? 512 : 300
+      final.getContext('2d')?.drawImage(temp, 0, 0, final.width, final.height)
+      setLivePreview(final.toDataURL('image/jpeg', 0.9))
     }
+    run()
+  }, [imageSrc, croppedAreaPixels, cropType])
 
-    generate()
-  }, [imageSrc, croppedAreaPixels, resizeWidth, resizeHeight, cropType])
-
-  const handleApply = () => {
-    if (!livePreview || !user) return
-
-    const updated = {
-      ...user,
-      ...form,
-      profilePic: cropType === 'avatar' ? livePreview : form.profilePic,
-      banner: cropType === 'banner' ? livePreview : form.banner,
-    }
-
-    if (cropType === 'avatar') {
-      setForm((f) => ({ ...f, profilePic: livePreview }))
-    } else {
-      setForm((f) => ({ ...f, banner: livePreview }))
-    }
-
-    setUser(updated)
-    persistUser(updated)
-
-    setShowCropper(false)
-    setImageSrc(null)
-    setLivePreview(null)
-  }
-
-  const openCropper = (type: 'avatar' | 'banner', file?: File) => {
-    if (file) {
+  const openCropper = (type: 'avatar' | 'banner') => {
+    const input = document.createElement('input')
+    input.type = 'file'
+    input.accept = 'image/*'
+    input.onchange = (e) => {
+      const f = (e.target as HTMLInputElement).files?.[0]
+      if (!f) return
       const reader = new FileReader()
       reader.onload = () => {
         if (typeof reader.result === 'string') {
@@ -211,500 +238,707 @@ export default function Profile() {
           setCrop({ x: 0, y: 0 })
         }
       }
-      reader.readAsDataURL(file)
-    } else {
-      const input = document.createElement('input')
-      input.type = 'file'
-      input.accept = 'image/*'
-      input.onchange = (e) => {
-        const f = (e.target as HTMLInputElement).files?.[0]
-        if (f) openCropper(type, f)
-      }
-      input.click()
+      reader.readAsDataURL(f)
+    }
+    input.click()
+  }
+
+  const handleApplyCrop = async () => {
+    if (!livePreview || !user || !supabase) return
+    setSaving(true)
+    let url = livePreview
+    try {
+      const res = await fetch(livePreview)
+      const blob = await res.blob()
+      const path = cropType === 'avatar' ? `avatars/${user.id}-${Date.now()}.jpg` : `banners/${user.id}-${Date.now()}.jpg`
+      await supabase.storage.from('comics').upload(path, blob, { upsert: true, contentType: 'image/jpeg' })
+      url = supabase.storage.from('comics').getPublicUrl(path).data.publicUrl
+    } catch { /* fallback data url */ }
+    const patch: any = cropType === 'avatar' ? { avatar_url: url } : { banner: url }
+    await supabase.from('profiles').update(patch).eq('id', user.id)
+    if (cropType === 'avatar') setForm((f) => ({ ...f, profilePic: url }))
+    else setForm((f) => ({ ...f, banner: url }))
+    const updated = {
+      ...user,
+      profilePic: cropType === 'avatar' ? url : form.profilePic,
+      banner: cropType === 'banner' ? url : form.banner,
+    }
+    setUser(updated)
+    persistLocal(updated)
+    setShowCropper(false)
+    setImageSrc(null)
+    setLivePreview(null)
+    setSaving(false)
+  }
+
+  const handleSave = async () => {
+    if (!user) return
+    setSaving(true)
+    if (supabase) {
+      await supabase.from('profiles').update({
+        username: form.username,
+        age: form.age ? Number(form.age) : null,
+        show_age: form.showAge,
+        description: form.description,
+        show_likes: form.showLikes,
+        show_comments: form.showComments,
+        show_folders: form.showFolders,
+      }).eq('id', user.id)
+    }
+    const updated = { ...user, ...form, age: form.age }
+    setUser(updated)
+    persistLocal(updated)
+    setEditMode(false)
+    setSaving(false)
+  }
+
+  const handleLogout = async () => {
+    if (supabase) await supabase.auth.signOut()
+    ;['currentUser', 'username', 'email', 'age', 'profilePic', 'role'].forEach((k) => localStorage.removeItem(k))
+    window.dispatchEvent(new Event('profileUpdated'))
+    // Forzar navegación completa a login (evita quedarse en Home por rutas protegidas mal)
+    window.location.assign('/login')
+  }
+
+  const createFolder = async () => {
+    if (!supabase || !user || !folderName.trim()) return
+    const { data, error } = await supabase
+      .from('favorite_folders')
+      .insert({ user_id: user.id, name: folderName.trim() })
+      .select()
+      .single()
+    if (!error && data) {
+      setFolders((prev) => [...prev, data])
+      setFolderItems((prev) => ({ ...prev, [data.id]: [] }))
+      setFolderName('')
     }
   }
 
-  const handleSave = () => {
-    const updated = { ...user, ...form }
-    setUser(updated)
-    persistUser(updated)
-    setEditMode(false)
+  const deleteFolder = (id: string) => {
+    setModal({
+      title: 'Borrar carpeta',
+      body: '¿Eliminar esta carpeta?',
+      onConfirm: async () => {
+        if (!supabase) return
+        await supabase.from('favorite_folders').delete().eq('id', id)
+        setFolders((prev) => prev.filter((f) => f.id !== id))
+        if (activeFolder === id) setActiveFolder(null)
+        setModal(null)
+      },
+    })
   }
 
-  const handleLogout = () => {
-    localStorage.removeItem('currentUser')
-    localStorage.removeItem('username')
-    localStorage.removeItem('email')
-    localStorage.removeItem('age')
-    localStorage.removeItem('profilePic')
-    navigate('/login')
+  const addComicToFolder = async (folderId: string, comicId: string) => {
+    if (!supabase) return
+    const { data, error } = await supabase
+      .from('favorite_items')
+      .insert({ folder_id: folderId, comic_id: comicId })
+      .select('id, comic_id, comics(id, title, cover_url)')
+      .single()
+    if (!error && data) {
+      setFolderItems((prev) => ({ ...prev, [folderId]: [...(prev[folderId] || []), data] }))
+    }
+  }
+
+  const removeFromFolder = async (folderId: string, itemId: string) => {
+    if (!supabase) return
+    await supabase.from('favorite_items').delete().eq('id', itemId)
+    setFolderItems((prev) => ({
+      ...prev,
+      [folderId]: (prev[folderId] || []).filter((x) => x.id !== itemId),
+    }))
+  }
+
+  const deleteWallPost = (id: string) => {
+    setModal({
+      title: 'Borrar del muro',
+      body: '¿Eliminar este mensaje?',
+      onConfirm: async () => {
+        if (!supabase) return
+        await supabase.from('profile_wall').delete().eq('id', id)
+        setWall((prev) => prev.filter((w) => w.id !== id))
+        setModal(null)
+      },
+    })
   }
 
   if (!user) return null
 
+  const filteredComics = allComics.filter(
+    (c) => !comicSearch.trim() || c.title.toLowerCase().includes(comicSearch.toLowerCase())
+  )
+
   return (
     <>
       <style>{`
-        .profile-page {
-          max-width: 960px;
+        .pf {
+          max-width: 1080px;
           margin: 0 auto;
-          padding: 20px 16px 40px;
+          padding: 0 16px 48px;
+          font-family: 'Laffayette Comic Pro', cursive, Arial, sans-serif;
         }
-        .banner {
-          height: 200px;
-          background: #333;
-          border-radius: 14px;
+
+        /* Hero */
+        .pf-hero {
+          position: relative;
+          margin: 0 -16px 0;
+          height: 220px;
+          background: linear-gradient(135deg, #2a2a2a, #444);
           background-size: cover;
           background-position: center;
-          position: relative;
-          margin-bottom: 80px;
           cursor: pointer;
         }
-        .banner-upload-hint {
+        .pf-hero::after {
+          content: '';
           position: absolute;
           inset: 0;
-          background: rgba(0,0,0,0.45);
-          color: white;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          opacity: 0;
-          transition: opacity 0.25s;
-          border-radius: 14px;
-          font-size: 15px;
+          background: linear-gradient(to top, rgba(0,0,0,0.55), transparent 50%);
+          pointer-events: none;
         }
-        .banner:hover .banner-upload-hint { opacity: 1; }
-        .avatar-big {
-          width: 130px;
-          height: 130px;
-          border-radius: 50%;
-          border: 5px solid #fff;
+        .pf-hero-inner {
+          max-width: 1080px;
+          margin: 0 auto;
+          padding: 0 16px;
+          position: relative;
+          height: 100%;
+        }
+        .pf-avatar {
           position: absolute;
-          bottom: -55px;
-          left: 24px;
+          left: 16px;
+          bottom: -48px;
+          width: 112px;
+          height: 112px;
+          border-radius: 50%;
+          border: 4px solid var(--card, #fff);
           object-fit: cover;
-          box-shadow: 0 8px 20px rgba(0,0,0,0.35);
           background: #222;
-          z-index: 3;
+          box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+          z-index: 2;
           cursor: pointer;
-          transition: transform 0.25s;
         }
-        .avatar-big:hover { transform: scale(1.05); }
-        .profile-info {
-          padding-left: 24px;
-          margin-top: 10px;
-          margin-bottom: 28px;
-        }
-        .profile-info h1 {
-          margin: 0 0 6px 0;
-          font-size: 1.9rem;
-          word-break: break-word;
-        }
-        .profile-info p {
-          margin: 4px 0;
-          word-break: break-word;
-        }
-        .section {
-          background: var(--card);
-          border-radius: 14px;
-          padding: 20px;
-          margin-bottom: 22px;
-          box-shadow: 0 6px 15px rgba(0,0,0,0.1);
-        }
-        .section h2 {
-          margin-top: 0;
-          border-bottom: 3px solid #FFFF00;
-          padding-bottom: 8px;
-        }
-        .edit-btn, .logout-btn {
-          background: linear-gradient(135deg, #FFFF00, #FFD700);
-          border: none;
-          padding: 10px 18px;
-          border-radius: 8px;
-          font-family: inherit;
-          cursor: pointer;
-          font-weight: bold;
-          margin-right: 10px;
-          margin-top: 8px;
-          transition: transform 0.2s, box-shadow 0.2s;
-        }
-        .edit-btn:hover {
-          transform: scale(1.05);
-          box-shadow: 0 0 14px #FFD700;
-        }
-        .logout-btn {
-          background: #ff4d4d;
-          color: white;
-        }
-        .logout-btn:hover {
-          transform: scale(1.05);
-          box-shadow: 0 0 14px #ff4d4d;
-        }
-        .profile-input,
-        .profile-textarea {
-          width: 100%;
-          max-width: 400px;
-          padding: 11px 14px;
-          border-radius: 8px;
-          border: 3px solid #494949;
-          background: #666378;
-          color: #0a0a0a;
-          font-family: 'Laffayette Comic Pro', cursive, Arial, sans-serif;
-          font-size: 15px;
-          outline: none;
-          transition: border-color 0.2s, box-shadow 0.2s, background 0.2s;
-        }
-        .profile-input:focus,
-        .profile-textarea:focus {
-          border-color: #222;
-          background: #525061;
-          box-shadow: 0 0 0 3px rgba(255, 215, 0, 0.25);
-        }
-        .profile-textarea {
-          resize: vertical;
-          min-height: 90px;
-        }
-        .switch {
-          position: relative;
-          display: inline-block;
-          width: 52px;
-          height: 28px;
-        }
-        .switch input { opacity: 0; width: 0; height: 0; }
-        .slider {
+        .pf-actions-top {
           position: absolute;
-          cursor: pointer;
-          inset: 0;
-          background-color: #ccc;
-          transition: 0.3s;
-          border-radius: 28px;
-          border: 2px solid #999;
-        }
-        .slider:before {
-          position: absolute;
-          content: "";
-          height: 20px;
-          width: 20px;
-          left: 3px;
-          bottom: 2px;
-          background-color: white;
-          transition: 0.3s;
-          border-radius: 50%;
-          box-shadow: 0 2px 4px rgba(0,0,0,0.3);
-        }
-        input:checked + .slider {
-          background-color: #FFD700;
-          border-color: #e6c200;
-        }
-        input:checked + .slider:before {
-          transform: translateX(24px);
-        }
-        .cropper-overlay {
-          position: fixed;
-          inset: 0;
-          background: rgba(0,0,0,0.88);
-          z-index: 1000;
-          display: flex;
-          justify-content: center;
-          align-items: center;
-          padding: 12px;
-        }
-        .cropper-modal {
-          background: rgba(255,255,255,0.96);
-          border: 5px solid #FFFF00;
-          border-radius: 16px;
-          width: 100%;
-          max-width: 440px;
-          overflow: hidden;
-        }
-        .cropper-header {
-          padding: 14px;
-          background: #333;
-          color: white;
-          text-align: center;
-          border-bottom: 4px solid #FFFF00;
-        }
-        .cropper-area {
-          position: relative;
-          height: 220px;
-          background: #111;
-        }
-        .cropper-controls {
-          padding: 14px 16px 6px;
-          display: flex;
-          flex-direction: column;
-          gap: 12px;
-        }
-        .cropper-controls label {
-          color: #222;
-          font-size: 13px;
-          margin-bottom: 2px;
-          display: block;
-        }
-        .pixel-inputs {
-          display: flex;
-          gap: 10px;
-        }
-        .pixel-inputs > div { flex: 1; }
-        .pixel-inputs input[type="number"] {
-          width: 100%;
-          padding: 8px;
-          border: 3px solid #494949;
-          border-radius: 6px;
-          background: rgb(102, 99, 120);
-          color: #0a0a0a;
-          font-size: 14px;
-          font-family: 'Laffayette Comic Pro', cursive, Arial, sans-serif;
-        }
-        .live-preview-box {
-          text-align: center;
-          padding: 8px 0 4px;
-        }
-        .live-preview-box img {
-          border: 3px solid #FFFF00;
-          object-fit: cover;
-          box-shadow: 0 0 10px #FFFF00;
-        }
-        .cropper-actions {
+          right: 16px;
+          bottom: 14px;
+          z-index: 2;
           display: flex;
           gap: 8px;
-          padding: 8px 16px 16px;
           flex-wrap: wrap;
+          justify-content: flex-end;
         }
-        .cropper-actions button {
-          flex: 1;
-          min-width: 100px;
-          padding: 11px;
+        .pf-btn {
+          padding: 9px 16px;
           border: none;
-          border-radius: 8px;
+          border-radius: 10px;
           font-family: inherit;
+          font-weight: bold;
+          font-size: 13px;
           cursor: pointer;
-        }
-        .btn-cancel { background: #666; color: white; }
-        .btn-auto { background: #4a4a8a; color: white; }
-        .btn-apply {
           background: linear-gradient(135deg, #FFFF00, #FFD700);
-          color: black;
-        }
-
-        .logout-modal-overlay {
-          position: fixed;
-          inset: 0;
-          background: rgba(0,0,0,0.7);
-          z-index: 2000;
-          display: flex;
-          justify-content: center;
+          color: #111;
+          text-decoration: none;
+          display: inline-flex;
           align-items: center;
-          padding: 16px;
         }
-        .logout-modal {
-          background: var(--card);
-          border: 4px solid #FFFF00;
-          border-radius: 16px;
-          padding: 28px 24px;
-          max-width: 360px;
-          width: 100%;
-          text-align: center;
-          box-shadow: 0 12px 40px rgba(0,0,0,0.4);
-          animation: modalPop 0.25s ease;
+        .pf-btn.ghost {
+          background: rgba(0,0,0,0.45);
+          color: #fff;
+          border: 1px solid rgba(255,255,255,0.35);
         }
-        @keyframes modalPop {
-          from { opacity: 0; transform: scale(0.92) translateY(12px); }
-          to { opacity: 1; transform: scale(1) translateY(0); }
+        .pf-btn.danger { background: #c0392b; color: #fff; }
+
+        .pf-identity {
+          margin-top: 60px;
+          margin-bottom: 22px;
+          padding-left: 4px;
         }
-        .logout-modal h3 {
-          margin: 0 0 10px 0;
-          font-size: 1.35rem;
+        .pf-identity h1 {
+          margin: 0 0 6px;
+          font-size: 1.75rem;
           color: var(--text);
         }
-        .logout-modal p {
-          margin: 0 0 22px 0;
+        .pf-identity .meta {
+          margin: 0;
           color: var(--muted);
-          font-size: 0.95rem;
+          font-size: 14px;
         }
-        .logout-modal-actions {
+        .pf-identity .bio {
+          margin: 10px 0 0;
+          color: var(--text);
+          white-space: pre-wrap;
+          line-height: 1.45;
+          max-width: 640px;
+        }
+
+        /* Layout 2 columnas */
+        .pf-layout {
+          display: grid;
+          grid-template-columns: 1fr 320px;
+          gap: 20px;
+          align-items: start;
+        }
+        @media (max-width: 860px) {
+          .pf-layout { grid-template-columns: 1fr; }
+          .pf-side { order: 2; }
+          .pf-main { order: 1; }
+        }
+
+        .pf-card {
+          background: var(--card);
+          border-radius: 16px;
+          padding: 18px 18px 16px;
+          box-shadow: 0 6px 20px rgba(0,0,0,0.08);
+          margin-bottom: 16px;
+        }
+        .pf-card h2 {
+          margin: 0 0 14px;
+          font-size: 1.05rem;
+          color: var(--text);
           display: flex;
-          gap: 10px;
-          justify-content: center;
+          align-items: center;
+          gap: 8px;
+          padding-bottom: 10px;
+          border-bottom: 2px solid #FFD700;
         }
-        .logout-modal-actions button {
-          flex: 1;
-          padding: 11px 16px;
+        .pf-card h3 {
+          margin: 16px 0 10px;
+          font-size: 0.95rem;
+          color: var(--muted);
+        }
+
+        .wall-empty {
+          text-align: center;
+          color: var(--muted);
+          padding: 28px 12px;
+          font-size: 14px;
+        }
+        .wall-item {
+          display: flex;
+          gap: 12px;
+          padding: 14px 0;
+          border-top: 1px solid rgba(128,128,128,0.18);
+        }
+        .wall-item:first-of-type { border-top: none; }
+        .wall-item img {
+          width: 42px;
+          height: 42px;
+          border-radius: 50%;
+          object-fit: cover;
+          border: 2px solid #FFD700;
+          flex-shrink: 0;
+        }
+        .wall-meta { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+        .wall-meta a { color: var(--text); font-weight: bold; text-decoration: none; }
+        .wall-text { color: var(--text); white-space: pre-wrap; line-height: 1.4; font-size: 14px; }
+        .wall-del {
+          margin-top: 6px;
+          padding: 5px 10px;
+          font-size: 12px;
           border: none;
           border-radius: 8px;
+          background: transparent;
+          color: #c0392b;
           font-family: inherit;
           font-weight: bold;
           cursor: pointer;
-          transition: transform 0.2s, box-shadow 0.2s;
-        }
-        .logout-modal-actions button:hover {
-          transform: scale(1.03);
-        }
-        .btn-logout-cancel {
-          background: #888;
-          color: white;
-        }
-        .btn-logout-confirm {
-          background: #ff4d4d;
-          color: white;
         }
 
-        @media (max-width: 600px) {
-          .profile-info { padding-left: 16px; }
-          .avatar-big {
-            width: 100px;
-            height: 100px;
-            bottom: -45px;
-            left: 16px;
-          }
-          .banner { margin-bottom: 60px; }
+        .side-list { max-height: 220px; overflow-y: auto; }
+        .side-item {
+          padding: 10px 0;
+          border-top: 1px solid rgba(128,128,128,0.15);
+          font-size: 13px;
         }
+        .side-item:first-child { border-top: none; }
+        .side-item a { color: var(--text); text-decoration: none; font-weight: bold; }
+        .side-item a:hover { color: #c9a000; }
+        .side-item .sub { font-size: 11px; color: var(--muted); margin-bottom: 2px; }
+
+        .folder-chip {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          padding: 7px 12px;
+          margin: 3px;
+          border-radius: 999px;
+          border: 2px solid var(--border, #494949);
+          cursor: pointer;
+          font-weight: bold;
+          font-size: 12px;
+          color: var(--text);
+          background: transparent;
+        }
+        .folder-chip.active {
+          background: linear-gradient(135deg, #FFFF00, #FFD700);
+          color: #111;
+          border-color: #FFD700;
+        }
+        .fav-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
+          gap: 10px;
+          margin-top: 12px;
+        }
+        .fav-grid img {
+          width: 100%;
+          aspect-ratio: 3/4;
+          object-fit: cover;
+          border-radius: 8px;
+        }
+
+        .field-input, .field-textarea {
+          width: 100%;
+          max-width: 100%;
+          padding: 11px 14px;
+          border-radius: 10px;
+          border: 3px solid #494949;
+          background: rgb(102,99,120);
+          color: #0a0a0a;
+          font-family: inherit;
+          font-size: 14px;
+          box-sizing: border-box;
+        }
+        .field-textarea { min-height: 80px; resize: vertical; }
+        .toggle-row {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+          padding: 8px 0;
+        }
+        .switch { position: relative; display: inline-block; width: 48px; height: 26px; flex-shrink: 0; }
+        .switch input { opacity: 0; width: 0; height: 0; }
+        .slider {
+          position: absolute; cursor: pointer; inset: 0; background: #ccc;
+          transition: 0.25s; border-radius: 26px; border: 2px solid #999;
+        }
+        .slider:before {
+          position: absolute; content: ""; height: 18px; width: 18px;
+          left: 2px; bottom: 2px; background: white; transition: 0.25s; border-radius: 50%;
+        }
+        input:checked + .slider { background: #FFD700; border-color: #e6c200; }
+        input:checked + .slider:before { transform: translateX(22px); }
+
+        .comic-pick {
+          max-height: 160px;
+          overflow-y: auto;
+          border: 2px solid var(--border, #494949);
+          border-radius: 10px;
+          margin-top: 8px;
+        }
+        .comic-pick button {
+          display: block; width: 100%; text-align: left; padding: 10px 12px;
+          border: none; border-bottom: 1px solid rgba(128,128,128,0.12);
+          background: transparent; color: var(--text); font-family: inherit; cursor: pointer; font-size: 13px;
+        }
+        .comic-pick button:hover { background: rgba(255,215,0,0.12); }
+
+        .muted { color: var(--muted); font-size: 13px; }
+
+        .cropper-overlay {
+          position: fixed; inset: 0; background: rgba(0,0,0,0.88); z-index: 1000;
+          display: flex; justify-content: center; align-items: center; padding: 12px;
+        }
+        .cropper-modal {
+          background: rgba(255,255,255,0.97); border: 4px solid #FFD700;
+          border-radius: 16px; width: 100%; max-width: 440px; overflow: hidden;
+        }
+        .cropper-header {
+          padding: 14px; background: #333; color: white; text-align: center;
+          border-bottom: 3px solid #FFD700; font-weight: bold;
+        }
+        .cropper-area { position: relative; height: 220px; background: #111; }
+        .cropper-actions { display: flex; gap: 8px; padding: 12px 16px 16px; }
+        .cropper-actions button {
+          flex: 1; padding: 11px; border: none; border-radius: 8px;
+          font-family: inherit; cursor: pointer; font-weight: bold;
+        }
+        .btn-apply { background: linear-gradient(135deg, #FFFF00, #FFD700); }
+        .btn-cancel { background: #666; color: white; }
+
+        .modal-overlay {
+          position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 2000;
+          display: flex; justify-content: center; align-items: center; padding: 16px;
+        }
+        .modal-box {
+          background: var(--card); color: var(--text); border: 3px solid #FFD700;
+          border-radius: 16px; padding: 24px; max-width: 380px; width: 100%; text-align: center;
+        }
+        .modal-actions { display: flex; gap: 10px; margin-top: 16px; }
+        .modal-actions button {
+          flex: 1; padding: 11px; border: none; border-radius: 10px;
+          font-family: inherit; font-weight: bold; cursor: pointer;
+        }
+        .modal-danger { background: #c0392b; color: #fff; }
+        .modal-cancel { background: #666; color: #fff; }
+
+        .lightbox {
+          position: fixed; inset: 0; z-index: 3000; background: rgba(0,0,0,0.92);
+          display: flex; align-items: center; justify-content: center; cursor: zoom-out;
+        }
+        .lightbox img { max-width: 95%; max-height: 95%; object-fit: contain; }
       `}</style>
 
       <Header />
       <ProfileButton />
 
-      <div className="profile-page">
+      <div className="pf">
+        {/* Banner + avatar */}
         <div
-          className="banner"
-          style={{
-            backgroundImage: form.banner
-              ? `url(${form.banner})`
-              : 'linear-gradient(135deg, #333, #555)',
-          }}
+          className="pf-hero"
+          style={form.banner ? { backgroundImage: `url(${form.banner})` } : undefined}
           onClick={() => openCropper('banner')}
         >
-          <div className="banner-upload-hint">Cambiar banner</div>
-          <img
-            src={form.profilePic}
-            className="avatar-big"
-            alt="Avatar"
-            onClick={(e) => {
-              e.stopPropagation()
-              openCropper('avatar')
-            }}
-          />
+          <div className="pf-hero-inner">
+            <img
+              className="pf-avatar"
+              src={form.profilePic}
+              alt=""
+              onClick={(e) => {
+                e.stopPropagation()
+                openCropper('avatar')
+              }}
+            />
+            <div className="pf-actions-top" onClick={(e) => e.stopPropagation()}>
+              {!editMode && (
+                <>
+                  <button type="button" className="pf-btn" onClick={() => setEditMode(true)}>Editar</button>
+                  {user.role === 'admin' && (
+                    <Link to="/admin" className="pf-btn ghost">Admin</Link>
+                  )}
+                  <button type="button" className="pf-btn danger" onClick={() => setConfirmLogout(true)}>Salir</button>
+                </>
+              )}
+            </div>
+          </div>
         </div>
 
-        <div className="profile-info">
+        <div className="pf-identity">
           {editMode ? (
-            <>
-              <div style={{ marginBottom: 12 }}>
-                <label style={{ display: 'block', marginBottom: 4, fontSize: 13 }}>
-                  Nombre de usuario
-                </label>
-                <input
-                  className="profile-input"
-                  value={form.username}
-                  onChange={(e) => setForm({ ...form, username: e.target.value })}
-                />
-              </div>
-
-              <div style={{ marginBottom: 14 }}>
-                <label style={{ display: 'block', marginBottom: 4, fontSize: 13 }}>
-                  Descripción
-                </label>
-                <textarea
-                  className="profile-textarea"
-                  value={form.description}
-                  onChange={(e) => setForm({ ...form, description: e.target.value })}
-                  rows={3}
-                />
-              </div>
-
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>
+            <div style={{ maxWidth: 480 }}>
+              <label className="muted">Usuario</label>
+              <input className="field-input" value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} style={{ marginBottom: 10 }} />
+              <label className="muted">Descripción</label>
+              <textarea className="field-textarea" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} style={{ marginBottom: 10 }} />
+              <div className="toggle-row">
                 <span>Mostrar edad</span>
-                <label className="switch">
-                  <input
-                    type="checkbox"
-                    checked={form.showAge}
-                    onChange={(e) => setForm({ ...form, showAge: e.target.checked })}
-                  />
-                  <span className="slider"></span>
-                </label>
+                <label className="switch"><input type="checkbox" checked={form.showAge} onChange={(e) => setForm({ ...form, showAge: e.target.checked })} /><span className="slider" /></label>
               </div>
-
               {form.showAge && (
-                <input
-                  className="profile-input"
-                  type="number"
-                  value={form.age}
-                  onChange={(e) => setForm({ ...form, age: e.target.value })}
-                  placeholder="Edad"
-                  style={{ width: 110, marginBottom: 14 }}
-                />
+                <input className="field-input" type="number" value={form.age} onChange={(e) => setForm({ ...form, age: e.target.value })} style={{ width: 120, marginBottom: 8 }} />
               )}
-
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 18 }}>
-                <span>Modo oscuro</span>
-                <label className="switch">
-                  <input
-                    type="checkbox"
-                    checked={theme === 'dark'}
-                    onChange={(e) => setTheme(e.target.checked ? 'dark' : 'light')}
-                  />
-                  <span className="slider"></span>
-                </label>
+              <div className="toggle-row">
+                <span>Likes públicos</span>
+                <label className="switch"><input type="checkbox" checked={form.showLikes} onChange={(e) => setForm({ ...form, showLikes: e.target.checked })} /><span className="slider" /></label>
               </div>
-
-              <button className="edit-btn" onClick={handleSave}>
-                Guardar cambios
-              </button>
-              <button
-                className="edit-btn"
-                style={{ background: '#ccc' }}
-                onClick={() => setEditMode(false)}
-              >
-                Cancelar
-              </button>
-            </>
+              <div className="toggle-row">
+                <span>Comentarios públicos</span>
+                <label className="switch"><input type="checkbox" checked={form.showComments} onChange={(e) => setForm({ ...form, showComments: e.target.checked })} /><span className="slider" /></label>
+              </div>
+              <div className="toggle-row">
+                <span>Carpetas públicas</span>
+                <label className="switch"><input type="checkbox" checked={form.showFolders} onChange={(e) => setForm({ ...form, showFolders: e.target.checked })} /><span className="slider" /></label>
+              </div>
+              <div className="toggle-row">
+                <span>Modo oscuro</span>
+                <label className="switch"><input type="checkbox" checked={theme === 'dark'} onChange={(e) => setTheme(e.target.checked ? 'dark' : 'light')} /><span className="slider" /></label>
+              </div>
+              <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
+                <button type="button" className="pf-btn" onClick={handleSave} disabled={saving}>{saving ? '…' : 'Guardar'}</button>
+                <button type="button" className="pf-btn ghost" onClick={() => setEditMode(false)}>Cancelar</button>
+              </div>
+            </div>
           ) : (
             <>
-              <h1>{form.username}</h1>
-              {form.showAge && <p>Edad: {form.age}</p>}
-              <p style={{ whiteSpace: 'pre-wrap', color: 'var(--muted)' }}>
-                {form.description || 'Sin descripción todavía.'}
-              </p>
-              <button className="edit-btn" onClick={() => setEditMode(true)}>
-                Editar perfil
-              </button>
-              <button className="logout-btn" onClick={() => setConfirmLogout(true)}>
-                Cerrar sesión
-              </button>
+              <h1>{form.username || 'Usuario'}</h1>
+              {form.showAge && form.age && <p className="meta">Edad: {form.age}</p>}
+              <p className="bio">{form.description || 'Sin descripción todavía.'}</p>
             </>
           )}
         </div>
 
-        <div className="section">
-          <h2>❤️ Mis Likes</h2>
-          <p style={{ color: 'var(--muted)' }}>
-            Aquí aparecerán los cómics que hayas marcado como favoritos.
-          </p>
-        </div>
+        {/* Muro + sidebar */}
+        <div className="pf-layout">
+          <div className="pf-main">
+            <div className="pf-card">
+              <h2>💬 Muro</h2>
+              {wall.length === 0 && (
+                <div className="wall-empty">Todavía no hay mensajes en tu muro.</div>
+              )}
+              {wall.map((w) => (
+                <div key={w.id} className="wall-item">
+                  <Link to={`/profiles/${w.author_id}`}>
+                    <img src={w.profiles?.avatar_url || '/loguito.png'} alt="" />
+                  </Link>
+                  <div style={{ flex: 1 }}>
+                    <div className="wall-meta">
+                      <Link to={`/profiles/${w.author_id}`}>{w.profiles?.username || 'Usuario'}</Link>
+                      {' · '}
+                      {new Date(w.created_at).toLocaleDateString('es-ES')}
+                    </div>
+                    <div className="wall-text">{w.content}</div>
+                    <button type="button" className="wall-del" onClick={() => deleteWallPost(w.id)}>Borrar</button>
+                  </div>
+                </div>
+              ))}
+            </div>
 
-        <div className="section">
-          <h2>💬 Mis Comentarios</h2>
-          <p style={{ color: 'var(--muted)' }}>
-            Aquí aparecerán tus comentarios.
-          </p>
+            <div className="pf-card">
+              <h2>📁 Carpetas</h2>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
+                <input
+                  className="field-input"
+                  style={{ maxWidth: 200 }}
+                  placeholder="Nombre (ej. Por leer)"
+                  value={folderName}
+                  onChange={(e) => setFolderName(e.target.value)}
+                />
+                <button type="button" className="pf-btn" onClick={createFolder}>Crear</button>
+              </div>
+              <div>
+                {folders.map((f) => (
+                  <span
+                    key={f.id}
+                    className={`folder-chip ${activeFolder === f.id ? 'active' : ''}`}
+                    onClick={() => setActiveFolder(activeFolder === f.id ? null : f.id)}
+                  >
+                    {f.name}
+                    <button
+                      type="button"
+                      style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: '#c0392b', fontWeight: 'bold' }}
+                      onClick={(e) => { e.stopPropagation(); deleteFolder(f.id) }}
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+              </div>
+              {activeFolder && (
+                <>
+                  <div className="fav-grid">
+                    {(folderItems[activeFolder] || []).map((it) => (
+                      <div key={it.id}>
+                        <Link to={`/comic/${it.comic_id}`}>
+                          <img src={it.comics?.cover_url || '/loguito.png'} alt={it.comics?.title} />
+                        </Link>
+                        <button type="button" className="wall-del" onClick={() => removeFromFolder(activeFolder, it.id)}>Quitar</button>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="muted" style={{ marginTop: 12 }}>Añadir arco:</p>
+                  <input className="field-input" placeholder="Buscar…" value={comicSearch} onChange={(e) => setComicSearch(e.target.value)} />
+                  <div className="comic-pick">
+                    {filteredComics.slice(0, 25).map((c) => (
+                      <button key={c.id} type="button" onClick={() => addComicToFolder(activeFolder, c.id)}>
+                        {c.title}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+
+          <aside className="pf-side">
+            <div className="pf-card">
+              <h2>❤️ Capítulos likeados</h2>
+              <div className="side-list">
+                {likesCh.length === 0 && <p className="muted">Aún no hay likes.</p>}
+                {likesCh.map((l) => (
+                  <div key={l.id} className="side-item" style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                    {(l.chapters as any)?.icon_url ? (
+                      <img src={(l.chapters as any).icon_url} alt="" style={{ width: 36, height: 36, borderRadius: 8, objectFit: 'cover', border: '2px solid #FFD700' }} />
+                    ) : (l.chapters as any)?.comics?.cover_url ? (
+                      <img src={(l.chapters as any).comics.cover_url} alt="" style={{ width: 36, height: 48, borderRadius: 6, objectFit: 'cover' }} />
+                    ) : null}
+                    <div>
+                      <div className="sub">{(l.chapters as any)?.comics?.title}</div>
+                      <Link to={`/comic/${l.chapters?.comic_id}/chapter/${l.chapter_id}`}>
+                        Cap. {l.chapters?.number} — {l.chapters?.title}
+                      </Link>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <h3>❤️ Comentarios likeados</h3>
+              <div className="side-list">
+                {likesCm.length === 0 && <p className="muted">Sin likes en comentarios.</p>}
+                {likesCm.map((l) => {
+                  const cm = (l as any).comments
+                  const author = cm?.profiles
+                  const ch = cm?.chapters
+                  const comicTitle = ch?.comics?.title
+                  return (
+                    <div key={l.id} className="side-item" style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+                      <Link to={`/profiles/${cm?.user_id || ''}`}>
+                        <img
+                          src={author?.avatar_url || '/loguito.png'}
+                          alt=""
+                          style={{ width: 36, height: 36, borderRadius: '50%', objectFit: 'cover', border: '2px solid #FFD700' }}
+                        />
+                      </Link>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div className="sub">
+                          <Link to={`/profiles/${cm?.user_id || ''}`} style={{ color: 'var(--text)' }}>
+                            {author?.username || 'Usuario'}
+                          </Link>
+                          {' · '}
+                          {comicTitle || 'Arco'} · Cap. {ch?.number}
+                        </div>
+                        <Link to={`/comic/${ch?.comic_id}/chapter/${cm?.chapter_id}`}>
+                          {(cm?.content || 'Comentario').slice(0, 70)}…
+                        </Link>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+
+            <div className="pf-card">
+              <h2>💬 Mis comentarios</h2>
+              <div className="side-list">
+                {myComments.length === 0 && <p className="muted">No has comentado aún.</p>}
+                {myComments.map((c) => (
+                  <div key={c.id} className="side-item" style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+                    {(c.chapters as any)?.comics?.cover_url && (
+                      <img src={(c.chapters as any).comics.cover_url} alt="" style={{ width: 36, height: 48, borderRadius: 6, objectFit: 'cover', flexShrink: 0 }} />
+                    )}
+                    <div>
+                      <div className="sub">{(c.chapters as any)?.comics?.title} · Cap. {c.chapters?.number}</div>
+                      <Link to={`/comic/${c.chapters?.comic_id}/chapter/${c.chapter_id}`}>{c.content}</Link>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </aside>
         </div>
       </div>
 
       <Footer />
 
-
       {confirmLogout && (
-        <div className="logout-modal-overlay" onClick={() => setConfirmLogout(false)}>
-          <div className="logout-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-overlay" onClick={() => setConfirmLogout(false)}>
+          <div className="modal-box" onClick={(e) => e.stopPropagation()}>
             <h3>¿Cerrar sesión?</h3>
-            <p>¿Estás seguro de que quieres salir de tu cuenta?</p>
-            <div className="logout-modal-actions">
-              <button className="btn-logout-cancel" onClick={() => setConfirmLogout(false)}>
-                Cancelar
-              </button>
-              <button className="btn-logout-confirm" onClick={handleLogout}>
-                Sí, cerrar sesión
-              </button>
+            <p className="muted">Saldrás de tu cuenta.</p>
+            <div className="modal-actions">
+              <button type="button" className="modal-cancel" onClick={() => setConfirmLogout(false)}>Cancelar</button>
+              <button type="button" className="modal-danger" onClick={handleLogout}>Salir</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {modal && (
+        <div className="modal-overlay" onClick={() => setModal(null)}>
+          <div className="modal-box" onClick={(e) => e.stopPropagation()}>
+            <h3>{modal.title}</h3>
+            <p className="muted">{modal.body}</p>
+            <div className="modal-actions">
+              <button type="button" className="modal-cancel" onClick={() => setModal(null)}>Cancelar</button>
+              <button type="button" className="modal-danger" onClick={modal.onConfirm}>Confirmar</button>
             </div>
           </div>
         </div>
@@ -713,12 +947,7 @@ export default function Profile() {
       {showCropper && imageSrc && (
         <div className="cropper-overlay">
           <div className="cropper-modal">
-            <div className="cropper-header">
-              {cropType === 'avatar'
-                ? 'Ajusta tu foto de perfil'
-                : 'Ajusta el banner (recomendado 1200×300)'}
-            </div>
-
+            <div className="cropper-header">{cropType === 'avatar' ? 'Foto de perfil' : 'Banner'}</div>
             <div className="cropper-area">
               <Cropper
                 image={imageSrc}
@@ -732,112 +961,34 @@ export default function Profile() {
                 onCropComplete={onCropComplete}
               />
             </div>
-
-            <div className="cropper-controls">
-              <div>
-                <label>Zoom</label>
-                <input
-                  type="range"
-                  min={1}
-                  max={3}
-                  step={0.05}
-                  value={zoom}
-                  onChange={(e) => setZoom(Number(e.target.value))}
-                  style={{ width: '100%', accentColor: '#FFD700' }}
-                />
-              </div>
-
-              <div>
-                <label>Redimensionar (píxeles)</label>
-                <div className="pixel-inputs">
-                  <div>
-                    <label style={{ fontSize: 11 }}>Ancho</label>
-                    <input
-                      type="number"
-                      min={50}
-                      max={2500}
-                      value={resizeWidth}
-                      onChange={(e) => {
-                        const w = Number(e.target.value) || 0
-                        setResizeWidth(w)
-                        if (cropType === 'banner') {
-                          setResizeHeight(Math.round(w / 4))
-                        } else {
-                          setResizeHeight(w)
-                        }
-                      }}
-                    />
-                  </div>
-                  <div>
-                    <label style={{ fontSize: 11 }}>Alto</label>
-                    <input
-                      type="number"
-                      min={50}
-                      max={2500}
-                      value={resizeHeight}
-                      onChange={(e) => {
-                        const h = Number(e.target.value) || 0
-                        setResizeHeight(h)
-                        if (cropType === 'banner') {
-                          setResizeWidth(Math.round(h * 4))
-                        } else {
-                          setResizeWidth(h)
-                        }
-                      }}
-                    />
-                  </div>
-                </div>
-                <small style={{ color: '#555', fontSize: 11 }}>
-                  {cropType === 'banner'
-                    ? `Banner 4:1 · Original: ${originalWidth}×${originalHeight} px`
-                    : `Original: ${originalWidth}×${originalHeight} px`}
-                </small>
-              </div>
+            <div style={{ padding: '8px 16px' }}>
+              <input type="range" min={1} max={3} step={0.05} value={zoom} onChange={(e) => setZoom(Number(e.target.value))} style={{ width: '100%', accentColor: '#FFD700' }} />
             </div>
-
             {livePreview && (
-              <div className="live-preview-box">
+              <div style={{ textAlign: 'center', paddingBottom: 8 }}>
                 <img
                   src={livePreview}
-                  alt="Vista previa"
+                  alt=""
                   style={{
-                    width: cropType === 'avatar' ? 90 : 180,
-                    height: cropType === 'avatar' ? 90 : 45,
-                    borderRadius: cropType === 'avatar' ? '50%' : 8,
+                    width: cropType === 'avatar' ? 80 : 160,
+                    height: cropType === 'avatar' ? 80 : 40,
+                    borderRadius: cropType === 'avatar' ? '50%' : 6,
+                    border: '2px solid #FFD700',
                   }}
                 />
-                <div style={{ fontSize: 12, color: '#333', marginTop: 4 }}>
-                  Vista previa ({resizeWidth}×{resizeHeight})
-                </div>
               </div>
             )}
-
             <div className="cropper-actions">
-              <button className="btn-cancel" onClick={() => setShowCropper(false)}>
-                Cancelar
-              </button>
-              <button
-                className="btn-auto"
-                onClick={() => {
-                  setCrop({ x: 0, y: 0 })
-                  setZoom(1.1)
-                  if (cropType === 'banner') {
-                    setResizeWidth(1200)
-                    setResizeHeight(300)
-                  } else {
-                    const side = Math.max(512, Math.min(originalWidth, originalHeight))
-                    setResizeWidth(side)
-                    setResizeHeight(side)
-                  }
-                }}
-              >
-                Auto ajustar
-              </button>
-              <button className="btn-apply" onClick={handleApply}>
-                Aplicar
-              </button>
+              <button className="btn-cancel" onClick={() => setShowCropper(false)}>Cancelar</button>
+              <button className="btn-apply" onClick={handleApplyCrop} disabled={saving}>{saving ? '…' : 'Aplicar'}</button>
             </div>
           </div>
+        </div>
+      )}
+
+      {lightbox && (
+        <div className="lightbox" onClick={() => setLightbox(null)}>
+          <img src={lightbox} alt="" onClick={(e) => e.stopPropagation()} />
         </div>
       )}
     </>

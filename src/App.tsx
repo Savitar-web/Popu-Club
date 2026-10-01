@@ -6,6 +6,7 @@ import Arcos from './pages/Arcos'
 import ComicDetail from './pages/ComicDetail'
 import ChapterReader from './pages/ChapterReader'
 import Admin from './pages/Admin'
+import Profiles from './pages/Profiles'
 
 function App() {
   const isLoggedIn = !!localStorage.getItem('currentUser')
@@ -20,6 +21,7 @@ function App() {
         path="/login"
         element={isLoggedIn ? <Navigate to="/home" replace /> : <Login />}
       />
+      <Route path="/profiles/:userId" element={<Profiles />} />
       <Route path="/home" element={<Home />} />
       <Route path="/profile" element={<Profile />} />
       <Route path="/arcos" element={<Arcos />} />

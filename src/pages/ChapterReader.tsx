@@ -1,191 +1,370 @@
-import { useEffect, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { useEffect, useMemo, useState, FormEvent } from 'react'
+import { Link, useParams, useNavigate } from 'react-router-dom'
 import Header from '../components/Header'
 import Footer from '../components/Footer'
 import ProfileButton from '../components/ProfileButton'
-import { supabase, isSupabaseConfigured, getMyProfile } from '../lib/supabase'
+import { supabase, isSupabaseConfigured } from '../lib/supabase'
 
-type Page = {
-  id: string
-  image_url: string
-  page_number: number
-}
-
+type Page = { id: string; image_url: string; page_number: number }
+type Chapter = { id: string; comic_id: string; number: number; title: string; status: string; icon_url?: string | null }
+type Comic = { id: string; title: string; is_finished?: boolean; status?: string }
 type Comment = {
   id: string
   content: string
   created_at: string
   user_id: string
+  parent_id?: string | null
+  is_disabled?: boolean
+  like_count?: number
+  liked_by_me?: boolean
   profiles?: { username: string | null; avatar_url?: string | null } | null
+  reply_to_username?: string | null
 }
 
 export default function ChapterReader() {
   const { comicId, chapterId } = useParams()
+  const navigate = useNavigate()
+  const [comic, setComic] = useState<Comic | null>(null)
+  const [chapter, setChapter] = useState<Chapter | null>(null)
+  const [allChapters, setAllChapters] = useState<Chapter[]>([])
   const [pages, setPages] = useState<Page[]>([])
   const [comments, setComments] = useState<Comment[]>([])
-  const [chapterTitle, setChapterTitle] = useState('')
-  const [chapterNumber, setChapterNumber] = useState<number | null>(null)
   const [text, setText] = useState('')
   const [loading, setLoading] = useState(true)
   const [posting, setPosting] = useState(false)
   const [error, setError] = useState('')
-  const [msg, setMsg] = useState('')
+  const [myId, setMyId] = useState<string | null>(null)
+  const [likeCount, setLikeCount] = useState(0)
+  const [liked, setLiked] = useState(false)
+  const [likeBusy, setLikeBusy] = useState(false)
+  const [editId, setEditId] = useState<string | null>(null)
+  const [editText, setEditText] = useState('')
+  const [modal, setModal] = useState<{ title: string; body: string; onConfirm?: () => void } | null>(null)
+  const [replyTo, setReplyTo] = useState<Comment | null>(null)
+  const [expandedReplies, setExpandedReplies] = useState<Record<string, boolean>>({})
 
   useEffect(() => {
-    if (chapterId) loadData(chapterId)
-  }, [chapterId])
+    if (comicId && chapterId) load(comicId, chapterId)
+  }, [comicId, chapterId])
 
-  useEffect(() => {
-    if (window.location.hash === '#comentarios') {
-      setTimeout(() => {
-        document.getElementById('comentarios')?.scrollIntoView({ behavior: 'smooth' })
-      }, 300)
-    }
-  }, [comments])
-
-  const loadData = async (id: string) => {
+  const load = async (cId: string, chId: string) => {
     setLoading(true)
     setError('')
-
     if (!isSupabaseConfigured || !supabase) {
-      setError('Supabase no está configurado. Revisa tu archivo .env')
+      setError('Supabase no configurado')
       setLoading(false)
       return
     }
-
     try {
-      // Capítulo
-      const { data: ch, error: chErr } = await supabase
+      const { data: { user } } = await supabase.auth.getUser()
+      setMyId(user?.id || null)
+
+      const { data: comicData } = await supabase.from('comics').select('id, title, is_finished, status').eq('id', cId).single()
+      setComic(comicData as Comic)
+
+      const { data: chList } = await supabase
         .from('chapters')
-        .select('id, number, title, status')
-        .eq('id', id)
+        .select('id, comic_id, number, title, status, icon_url')
+        .eq('comic_id', cId)
+        .eq('status', 'published')
+        .order('number', { ascending: true })
+      setAllChapters((chList as Chapter[]) || [])
+
+      const { data: ch } = await supabase
+        .from('chapters')
+        .select('id, comic_id, number, title, status, icon_url')
+        .eq('id', chId)
         .single()
+      setChapter(ch as Chapter)
 
-      if (chErr || !ch) {
-        setError(chErr?.message || 'Capítulo no encontrado')
-        setLoading(false)
-        return
-      }
-
-      if (ch.status !== 'published') {
-        setError('Este capítulo aún no está publicado.')
-        setLoading(false)
-        return
-      }
-
-      setChapterTitle(ch.title)
-      setChapterNumber(ch.number)
-
-      // Páginas ordenadas
-      const { data: pg, error: pgErr } = await supabase
+      const { data: pgs } = await supabase
         .from('pages')
         .select('id, image_url, page_number')
-        .eq('chapter_id', id)
+        .eq('chapter_id', chId)
         .order('page_number', { ascending: true })
+      setPages((pgs as Page[]) || [])
 
-      if (pgErr) {
-        setError(pgErr.message)
-        setLoading(false)
-        return
-      }
+      // Registrar vista (silencioso)
+      try {
+        await supabase.from('chapter_views').insert({
+          chapter_id: chId,
+          user_id: user?.id || null,
+        })
+      } catch (_) {}
 
-      setPages((pg as Page[]) || [])
+      // Likes del capítulo
+      const { count, error: cntErr } = await supabase
+        .from('likes')
+        .select('*', { count: 'exact', head: true })
+        .eq('chapter_id', chId)
+      if (cntErr) console.warn('likes count:', cntErr.message)
+      setLikeCount(count || 0)
 
-      // Comentarios reales con perfil
-      const { data: cm, error: cmErr } = await supabase
-        .from('comments')
-        .select('id, content, created_at, user_id, profiles(username, avatar_url)')
-        .eq('chapter_id', id)
-        .order('created_at', { ascending: false })
-
-      if (cmErr) {
-        console.warn('comments:', cmErr.message)
-        setComments([])
+      if (user) {
+        const { data: myLike, error: mlErr } = await supabase
+          .from('likes')
+          .select('id')
+          .eq('chapter_id', chId)
+          .eq('user_id', user.id)
+          .maybeSingle()
+        if (mlErr) console.warn('my like:', mlErr.message)
+        setLiked(!!myLike)
       } else {
-        setComments((cm as any) || [])
+        setLiked(false)
       }
+
+      const { data: cms } = await supabase
+        .from('comments')
+        .select('id, content, created_at, user_id, parent_id, is_disabled, profiles(username, avatar_url)')
+        .eq('chapter_id', chId)
+        .or('is_disabled.eq.false,is_disabled.is.null')
+        .order('created_at', { ascending: true })
+
+      const list = (cms as any[]) || []
+      const byId: Record<string, any> = {}
+      list.forEach((c) => { byId[c.id] = c })
+      const withLikes: Comment[] = []
+      for (const c of list) {
+        const { count: lc } = await supabase
+          .from('comment_likes')
+          .select('*', { count: 'exact', head: true })
+          .eq('comment_id', c.id)
+        let liked_by_me = false
+        if (user) {
+          const { data: ml } = await supabase
+            .from('comment_likes')
+            .select('id')
+            .eq('comment_id', c.id)
+            .eq('user_id', user.id)
+            .maybeSingle()
+          liked_by_me = !!ml
+        }
+        let reply_to_username: string | null = null
+        if (c.parent_id && byId[c.parent_id]?.profiles?.username) {
+          reply_to_username = byId[c.parent_id].profiles.username
+        }
+        withLikes.push({ ...c, like_count: lc || 0, liked_by_me, reply_to_username })
+      }
+      setComments(withLikes)
     } catch (e: any) {
-      setError(e?.message || 'Error al cargar el capítulo')
+      setError(e?.message || 'Error')
     } finally {
       setLoading(false)
     }
   }
 
-  const sendComment = async (e: React.FormEvent) => {
-    e.preventDefault()
-    const content = text.trim()
-    if (!content || !chapterId || !supabase) return
+  const idx = useMemo(() => allChapters.findIndex((c) => c.id === chapterId), [allChapters, chapterId])
+  const prev = idx > 0 ? allChapters[idx - 1] : null
+  const next = idx >= 0 && idx < allChapters.length - 1 ? allChapters[idx + 1] : null
+  const isLast = idx === allChapters.length - 1 && allChapters.length > 0
+  const finished = comic?.is_finished || comic?.status === 'completed'
 
-    setPosting(true)
-    setMsg('')
+  const toggleChapterLike = async () => {
+    if (!supabase || !chapterId) {
+      setModal({ title: 'Inicia sesión', body: 'Debes iniciar sesión para dar like.' })
+      return
+    }
+    if (likeBusy) return
+    setLikeBusy(true)
     setError('')
-
     try {
-      const profile = await getMyProfile()
-      if (!profile) {
-        setError('Debes iniciar sesión para comentar.')
-        setPosting(false)
+      // Siempre leer sesión fresca
+      const { data: { user }, error: authErr } = await supabase.auth.getUser()
+      if (authErr || !user) {
+        setModal({ title: 'Inicia sesión', body: 'Tu sesión expiró. Vuelve a entrar.' })
+        setLikeBusy(false)
         return
       }
+      setMyId(user.id)
 
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) {
-        setError('Sesión no válida. Vuelve a iniciar sesión.')
-        setPosting(false)
-        return
-      }
-
-      const { data, error: insErr } = await supabase
-        .from('comments')
-        .insert({
+      if (liked) {
+        const { error: delErr } = await supabase
+          .from('likes')
+          .delete()
+          .eq('chapter_id', chapterId)
+          .eq('user_id', user.id)
+        if (delErr) {
+          setError('No se pudo quitar el like: ' + delErr.message)
+          setLikeBusy(false)
+          return
+        }
+        setLiked(false)
+        setLikeCount((n) => Math.max(0, n - 1))
+      } else {
+        const { error: insErr } = await supabase.from('likes').insert({
           chapter_id: chapterId,
           user_id: user.id,
-          content,
         })
-        .select('id, content, created_at, user_id, profiles(username, avatar_url)')
-        .single()
+        if (insErr) {
+          if (insErr.code === '23505' || insErr.message?.includes('duplicate')) {
+            setLiked(true)
+          } else {
+            setError(
+              'No se pudo guardar el like: ' +
+                insErr.message +
+                ' — Ejecuta FIX-LIKES-FINAL.sql en Supabase'
+            )
+            setLikeBusy(false)
+            return
+          }
+        } else {
+          setLiked(true)
+          setLikeCount((n) => n + 1)
+        }
+      }
+    } catch (e: any) {
+      setError(e?.message || 'Error al guardar like')
+    } finally {
+      setLikeBusy(false)
+    }
+  }
 
-      if (insErr) {
+  const toggleCommentLike = async (c: Comment) => {
+    if (!supabase) return
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) {
+      setModal({ title: 'Inicia sesión', body: 'Debes iniciar sesión para dar like.' })
+      return
+    }
+    if (c.liked_by_me) {
+      await supabase.from('comment_likes').delete().eq('comment_id', c.id).eq('user_id', user.id)
+      setComments((prev) =>
+        prev.map((x) =>
+          x.id === c.id ? { ...x, liked_by_me: false, like_count: Math.max(0, (x.like_count || 1) - 1) } : x
+        )
+      )
+    } else {
+      const { error: insErr } = await supabase.from('comment_likes').insert({
+        comment_id: c.id,
+        user_id: user.id,
+      })
+      if (insErr && insErr.code !== '23505') {
         setError(insErr.message)
+        return
+      }
+      setComments((prev) =>
+        prev.map((x) =>
+          x.id === c.id ? { ...x, liked_by_me: true, like_count: (x.like_count || 0) + 1 } : x
+        )
+      )
+    }
+  }
+
+  const sendComment = async (e: FormEvent) => {
+    e.preventDefault()
+    if (!supabase || !chapterId || !text.trim()) return
+    setPosting(true)
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) {
+        setError('Inicia sesión para comentar')
         setPosting(false)
         return
       }
-
-      setComments((prev) => [data as any, ...prev])
-      setText('')
-      setMsg('Comentario publicado')
-    } catch (e: any) {
-      setError(e?.message || 'No se pudo publicar el comentario')
+      const { data: prof } = await supabase
+        .from('profiles')
+        .select('comment_ban_until, banned_until')
+        .eq('id', user.id)
+        .single()
+      if (prof?.banned_until && new Date(prof.banned_until) > new Date()) {
+        setError('Cuenta suspendida.'); setPosting(false); return
+      }
+      if (prof?.comment_ban_until && new Date(prof.comment_ban_until) > new Date()) {
+        setError('No puedes comentar hasta ' + new Date(prof.comment_ban_until).toLocaleString())
+        setPosting(false)
+        return
+      }
+      const payload: any = {
+        chapter_id: chapterId,
+        user_id: user.id,
+        content: text.trim(),
+      }
+      if (replyTo) payload.parent_id = replyTo.id
+      const { data, error: err } = await supabase
+        .from('comments')
+        .insert(payload)
+        .select('id, content, created_at, user_id, parent_id, is_disabled, profiles(username, avatar_url)')
+        .single()
+      if (err) setError(err.message)
+      else {
+        setComments((prev) => [
+          ...prev,
+          {
+            ...(data as any),
+            like_count: 0,
+            liked_by_me: false,
+            reply_to_username: replyTo?.profiles?.username || null,
+          },
+        ])
+        setText('')
+        setReplyTo(null)
+      }
     } finally {
       setPosting(false)
     }
   }
 
+  const saveEdit = async (id: string) => {
+    if (!supabase || !editText.trim()) return
+    const { error: err } = await supabase.from('comments').update({ content: editText.trim() }).eq('id', id)
+    if (err) setError(err.message)
+    else {
+      setComments((prev) => prev.map((c) => (c.id === id ? { ...c, content: editText.trim() } : c)))
+      setEditId(null)
+    }
+  }
+
+  const deleteOwnComment = (c: Comment) => {
+    if (!myId || c.user_id !== myId) return
+    setModal({
+      title: 'Borrar comentario',
+      body: '¿Seguro que quieres borrar este comentario?',
+      onConfirm: async () => {
+        if (!supabase) return
+        await supabase.from('comments').delete().eq('id', c.id)
+        setComments((prev) => prev.filter((x) => x.id !== c.id))
+        setModal(null)
+      },
+    })
+  }
+
+  const NavBar = () => (
+    <div className="nav-btns">
+      <Link className="nav-btn" to={`/comic/${comicId}`}>Lista</Link>
+      <button type="button" className="nav-btn" disabled={!prev} onClick={() => prev && navigate(`/comic/${comicId}/chapter/${prev.id}`)}>← Anterior</button>
+      <button type="button" className="nav-btn primary" disabled={!next} onClick={() => next && navigate(`/comic/${comicId}/chapter/${next.id}`)}>Siguiente →</button>
+      <a className="nav-btn" href="#comentarios">💬 Comentarios</a>
+            <button
+        type="button"
+        className={`nav-btn like-btn ${liked ? 'on' : ''}`}
+        onClick={toggleChapterLike}
+        disabled={likeBusy}
+        style={liked ? { borderColor: '#ff2d55' } : undefined}
+      >
+        <span
+          aria-hidden
+          style={{
+            color: liked ? '#ff2d55' : '#888',
+            fontSize: '1.35em',
+            lineHeight: 1,
+            marginRight: 6,
+            fontWeight: 900,
+            WebkitTextFillColor: liked ? '#ff2d55' : '#888',
+            textShadow: liked ? '0 0 1px #ff2d55' : 'none',
+          }}
+        >
+          {liked ? '♥' : '♡'}
+        </span>
+        <span style={{ color: 'inherit' }}>{likeCount}</span>
+      </button>
+    </div>
+  )
+
   if (loading) {
     return (
       <>
-        <Header />
-        <ProfileButton />
-        <div style={{ maxWidth: 800, margin: '40px auto', padding: 24, textAlign: 'center', color: 'var(--muted)' }}>
-          Cargando capítulo…
-        </div>
-        <Footer />
-      </>
-    )
-  }
-
-  if (error && pages.length === 0) {
-    return (
-      <>
-        <Header />
-        <ProfileButton />
-        <div style={{ maxWidth: 560, margin: '40px auto', padding: 24, background: 'var(--card)', borderRadius: 14 }}>
-          <h1>No se pudo cargar</h1>
-          <p style={{ color: 'crimson' }}>{error}</p>
-          <Link to={comicId ? `/comic/${comicId}` : '/arcos'} style={{ color: 'var(--text)', fontWeight: 'bold' }}>
-            ← Volver
-          </Link>
-        </div>
+        <Header /><ProfileButton />
+        <div style={{ textAlign: 'center', padding: 48, color: 'var(--muted)' }}>Cargando…</div>
         <Footer />
       </>
     )
@@ -194,236 +373,258 @@ export default function ChapterReader() {
   return (
     <>
       <style>{`
-        .reader-top {
-          max-width: 800px;
-          margin: 0 auto;
-          padding: 16px;
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          gap: 12px;
-          flex-wrap: wrap;
-        }
-        .reader-top a {
-          color: var(--text);
-          font-weight: bold;
-          text-decoration: none;
-        }
-        .reader-top a:hover { color: rgb(128, 129, 212); }
-
-        .reader-strip {
-          width: 100%;
-          max-width: 800px;
-          margin: 0 auto;
-          background: #000;
-        }
-        .reader-strip img {
-          width: 100%;
-          height: auto;
-          display: block;
-          vertical-align: top;
-        }
-
-        .reader-nav {
-          max-width: 800px;
-          margin: 16px auto;
-          padding: 0 16px;
-          display: flex;
-          justify-content: space-between;
-          gap: 12px;
-        }
+        .reader-page { max-width: 820px; margin: 0 auto; padding: 16px 12px 80px; font-family: 'Laffayette Comic Pro', cursive, Arial, sans-serif; }
+        .reader-top { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+        .reader-title { margin: 0; font-size: 1.25rem; color: var(--text); }
+        .reader-sub { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
+        .nav-btns { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0; }
         .nav-btn {
-          flex: 1;
-          text-align: center;
-          padding: 12px;
-          border-radius: 10px;
-          background: linear-gradient(135deg, #FFFF00, #FFD700);
-          color: #111;
-          font-weight: bold;
-          text-decoration: none;
-          font-family: inherit;
-          border: none;
-          cursor: pointer;
+          padding: 10px 14px; border-radius: 10px; border: 2px solid var(--border, #494949);
+          background: var(--card); color: var(--text); font-family: inherit; font-weight: bold;
+          cursor: pointer; text-decoration: none; font-size: 13px;
         }
-
-        .comments-box {
-          max-width: 800px;
-          margin: 24px auto 48px;
-          padding: 0 16px;
-        }
-        .comments-box h2 {
-          color: var(--text);
-          border-bottom: 3px solid #FFD700;
-          padding-bottom: 8px;
-        }
-        .comment-form {
-          display: flex;
-          flex-direction: column;
-          gap: 10px;
-          margin-bottom: 20px;
-        }
+        .nav-btn:hover:not(:disabled) { border-color: #FFD700; }
+        .nav-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+        .nav-btn.primary { background: linear-gradient(135deg, #FFFF00, #FFD700); color: #111; border-color: #FFD700; }
+        .nav-btn.like-btn { border-color: #FFD700; }
+        .nav-btn.like-btn.on { background: linear-gradient(135deg, #FFFF00, #FFD700); color: #111; border-color: #ff2d55; }
+        .nav-btn.like-btn.on > span:first-child { color: #ff2d55 !important; -webkit-text-fill-color: #ff2d55 !important; }
+        .heart { font-size: 16px; }
+        .heart.pink, .nav-btn.like-btn.on .heart { color: #ff2d55 !important; }
+        .nav-btn.like-btn.on .heart.pink { color: #ff2d55; }
+        .pages-strip { display: flex; flex-direction: column; background: #111; border-radius: 12px; overflow: hidden; }
+        .pages-strip img { width: 100%; display: block; cursor: default; user-select: none; }
+        .end-box { margin: 20px 0; padding: 20px; border-radius: 14px; text-align: center; background: var(--card); border: 2px solid #FFD700; }
+        .comments-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 28px 0 14px; flex-wrap: wrap; }
+        .comments-head h2 { margin: 0; color: var(--text); }
         .comment-form textarea {
-          min-height: 90px;
-          padding: 12px;
-          border-radius: 10px;
-          border: 3px solid var(--border, #494949);
-          background: var(--card);
-          color: var(--text);
-          font-family: 'Laffayette Comic Pro', cursive, Arial, sans-serif;
-          resize: vertical;
+          width: 100%; min-height: 80px; padding: 12px 14px; border-radius: 10px;
+          border: 3px solid #494949; background: rgb(102,99,120); color: #0a0a0a;
+          font-family: inherit; font-size: 15px; box-sizing: border-box; resize: vertical;
         }
         .comment-form button {
-          align-self: flex-end;
-          padding: 10px 18px;
-          border: none;
-          border-radius: 8px;
-          background: linear-gradient(135deg, #FFFF00, #FFD700);
-          font-family: inherit;
-          font-weight: bold;
-          cursor: pointer;
+          margin-top: 10px; padding: 11px 18px; border: none; border-radius: 10px;
+          background: linear-gradient(135deg, #FFFF00, #FFD700); font-family: inherit; font-weight: bold; cursor: pointer;
         }
-        .comment-form button:disabled {
-          opacity: 0.6;
-          cursor: not-allowed;
+        .comment-item { display: flex; gap: 12px; padding: 14px 0; border-top: 1px solid rgba(128,128,128,0.2); }
+        .comment-avatar {
+          width: 40px; height: 40px; border-radius: 50%; object-fit: cover;
+          border: 2px solid #FFD700; background: #222; cursor: pointer; flex-shrink: 0;
         }
-        .comment-item {
-          background: var(--card);
-          border-radius: 12px;
-          padding: 14px;
-          margin-bottom: 12px;
-          box-shadow: 0 4px 12px rgba(0,0,0,0.08);
-          display: flex;
-          gap: 12px;
+        .comment-meta { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+        .comment-meta a { color: var(--text); font-weight: bold; text-decoration: none; }
+        .comment-actions { display: flex; gap: 10px; margin-top: 6px; flex-wrap: wrap; }
+        .c-like {
+          border: none; background: transparent; cursor: pointer; font-family: inherit;
+          color: var(--muted); font-size: 13px; font-weight: bold; padding: 4px 8px; border-radius: 8px;
         }
-        .comment-item img {
-          width: 44px;
-          height: 44px;
-          border-radius: 50%;
-          object-fit: cover;
-          border: 2px solid #FFD700;
-          background: #333;
+        .c-like.on { color: #ff4d6d; }
+        .err { background: #f8d7da; color: #721c24; padding: 10px; border-radius: 8px; margin-bottom: 10px; }
+        .edit-area {
+          width: 100%; min-height: 60px; padding: 10px; border-radius: 8px;
+          border: 2px solid #FFD700; font-family: inherit; background: var(--bg); color: var(--text); box-sizing: border-box;
         }
-        .comment-meta {
-          font-size: 0.85rem;
-          color: var(--muted);
-          margin-bottom: 4px;
+        .modal-overlay {
+          position: fixed; inset: 0; z-index: 2500; background: rgba(0,0,0,0.65);
+          display: flex; align-items: center; justify-content: center; padding: 16px;
         }
-        .empty-pages {
-          max-width: 800px;
-          margin: 40px auto;
-          padding: 40px 16px;
-          text-align: center;
-          color: var(--muted);
-          background: var(--card);
-          border-radius: 12px;
+        .modal-box {
+          background: var(--card); color: var(--text); border: 3px solid #FFD700;
+          border-radius: 16px; padding: 24px; max-width: 400px; width: 100%;
         }
-        .msg {
-          background: #d4edda;
-          color: #155724;
-          padding: 10px;
-          border-radius: 8px;
-          margin-bottom: 12px;
-          font-size: 14px;
+        .modal-box h3 { margin: 0 0 10px; }
+        .modal-actions { display: flex; gap: 10px; margin-top: 18px; }
+        .modal-actions button {
+          flex: 1; padding: 11px; border: none; border-radius: 10px;
+          font-family: inherit; font-weight: bold; cursor: pointer;
         }
-        .err {
-          background: #f8d7da;
-          color: #721c24;
-          padding: 10px;
-          border-radius: 8px;
-          margin-bottom: 12px;
-          font-size: 14px;
+        .modal-ok { background: linear-gradient(135deg, #FFFF00, #FFD700); color: #111; }
+        .modal-cancel { background: #666; color: #fff; }
+        .modal-danger { background: #c0392b; color: #fff; }
+        .heart-pink, .heart.pink, span.heart-pink, .like-btn.on .heart,
+        .nav-btn.like-btn.on .heart, .action-btn .heart-pink {
+          color: #ff2d55 !important;
+        }
+        .c-like.on { color: #ff2d55 !important; }
+      
+        /* PINK-FORCE */
+        .heart-pink, .c-like span, .nav-btn.like-btn.on span {
+          color: #ff2d55 !important;
+        }
+        [data-theme="dark"] .heart-pink,
+        [data-theme="light"] .heart-pink {
+          color: #ff2d55 !important;
         }
       `}</style>
 
       <Header />
       <ProfileButton />
 
-      <div className="reader-top">
-        <Link to={`/comic/${comicId}`}>← Volver al arco</Link>
-        <span style={{ color: 'var(--muted)' }}>
-          {chapterNumber != null ? `Capítulo ${chapterNumber}` : 'Capítulo'}
-          {chapterTitle ? ` — ${chapterTitle}` : ''}
-        </span>
-      </div>
-
-      {pages.length === 0 ? (
-        <div className="empty-pages">
-          <p>Este capítulo aún no tiene páginas subidas.</p>
+      <div className="reader-page">
+        <div className="reader-top">
+          <div>
+            <h1 className="reader-title">
+              {chapter?.icon_url && (
+                <img src={chapter.icon_url} alt="" style={{ width: 28, height: 28, borderRadius: 6, verticalAlign: 'middle', marginRight: 8 }} />
+              )}
+              #{chapter?.number} — {chapter?.title}
+            </h1>
+            <p className="reader-sub">
+              <Link to={`/comic/${comicId}`} style={{ color: 'var(--muted)' }}>{comic?.title}</Link>
+            </p>
+          </div>
         </div>
-      ) : (
-        <div className="reader-strip">
-          {pages.map((p) => (
-            <img
-              key={p.id}
-              src={p.image_url}
-              alt={`Página ${p.page_number}`}
-              loading="lazy"
-              decoding="async"
-            />
-          ))}
-        </div>
-      )}
 
-      <div className="reader-nav">
-        <Link className="nav-btn" to={`/comic/${comicId}`}>
-          Lista de capítulos
-        </Link>
-        <Link className="nav-btn" to={`/comic/${comicId}`}>
-          Volver al arco
-        </Link>
-      </div>
-
-      {/* BANDEJA DE COMENTARIOS REALES */}
-      <div className="comments-box" id="comentarios">
-        <h2>💬 Comentarios ({comments.length})</h2>
-
-        {msg && <div className="msg">{msg}</div>}
+        <NavBar />
         {error && <div className="err">{error}</div>}
 
+        <div className="pages-strip">
+          {pages.map((p) => (
+            <img key={p.id} src={p.image_url} alt={`Página ${p.page_number}`} draggable={false} />
+          ))}
+          {pages.length === 0 && <p style={{ color: '#aaa', textAlign: 'center', padding: 40 }}>Sin páginas todavía.</p>}
+        </div>
+
+        <NavBar />
+
+        {isLast && (
+          <div className="end-box">
+            {finished ? (
+              <><h3 style={{ margin: '0 0 8px' }}>Has completado este arco</h3><p style={{ margin: 0, color: 'var(--muted)' }}>No habrá más capítulos. ¡Gracias por leer!</p></>
+            ) : (
+              <><h3 style={{ margin: '0 0 8px' }}>Próximamente</h3><p style={{ margin: 0, color: 'var(--muted)' }}>Este es el último capítulo publicado. Pronto habrá más.</p></>
+            )}
+          </div>
+        )}
+
+        <div className="comments-head" id="comentarios">
+          <h2>Comentarios ({comments.length})</h2>
+        </div>
+
         <form className="comment-form" onSubmit={sendComment}>
+          {replyTo && (
+            <div style={{ fontSize: 13, color: 'var(--muted)', marginBottom: 8 }}>
+              Respondiendo a <strong>{replyTo.profiles?.username || 'Usuario'}</strong>
+              {' '}
+              <button type="button" className="c-like" onClick={() => setReplyTo(null)}>Cancelar</button>
+            </div>
+          )}
           <textarea
             value={text}
             onChange={(e) => setText(e.target.value)}
-            placeholder="Escribe tu comentario... (necesitas iniciar sesión)"
-            maxLength={500}
-            disabled={posting}
+            placeholder={myId ? (replyTo ? 'Escribe tu respuesta…' : 'Escribe un comentario…') : 'Inicia sesión para comentar'}
+            maxLength={800}
+            disabled={!myId || posting}
           />
-          <button type="submit" disabled={posting || !text.trim()}>
-            {posting ? 'Publicando…' : 'Publicar'}
+          <button type="submit" disabled={!myId || posting || !text.trim()}>
+            {posting ? 'Enviando…' : replyTo ? 'Responder' : 'Publicar'}
           </button>
         </form>
 
-        {comments.length === 0 && (
-          <p style={{ color: 'var(--muted)', textAlign: 'center', padding: '20px 0' }}>
-            Sé el primero en comentar.
-          </p>
-        )}
-
-        {comments.map((c) => (
-          <div key={c.id} className="comment-item">
-            <img
-              src={c.profiles?.avatar_url || '/loguito.png'}
-              alt={c.profiles?.username || 'Usuario'}
-            />
-            <div>
-              <div className="comment-meta">
-                <strong style={{ color: 'var(--text)' }}>
-                  {c.profiles?.username || 'Usuario'}
-                </strong>
-                {' · '}
-                {new Date(c.created_at).toLocaleDateString('es-ES', {
-                  year: 'numeric',
-                  month: 'short',
-                  day: 'numeric',
-                })}
+        {comments.filter((c) => !c.parent_id).map((c) => {
+          const replies = comments.filter((r) => r.parent_id === c.id)
+          const showAll = expandedReplies[c.id]
+          const visibleReplies = showAll ? replies : replies.slice(0, 2)
+          const renderOne = (item: Comment, isReply: boolean) => (
+            <div key={item.id} className="comment-item" style={isReply ? { marginLeft: 28, borderLeft: '2px solid rgba(255,215,0,0.35)', paddingLeft: 12 } : undefined}>
+              <Link to={`/profiles/${item.user_id}`}>
+                <img className="comment-avatar" src={item.profiles?.avatar_url || '/loguito.png'} alt="" />
+              </Link>
+              <div style={{ flex: 1 }}>
+                <div className="comment-meta">
+                  <Link to={`/profiles/${item.user_id}`}>{item.profiles?.username || 'Usuario'}</Link>
+                  {' · '}
+                  {new Date(item.created_at).toLocaleString('es-ES')}
+                </div>
+                {isReply && item.reply_to_username && (
+                  <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 4, fontStyle: 'italic' }}>
+                    Respuesta de {item.profiles?.username || 'Usuario'} para {item.reply_to_username}
+                  </div>
+                )}
+                {editId === item.id ? (
+                  <>
+                    <textarea className="edit-area" value={editText} onChange={(e) => setEditText(e.target.value)} />
+                    <div className="comment-actions">
+                      <button type="button" className="c-like" onClick={() => saveEdit(item.id)}>Guardar</button>
+                      <button type="button" className="c-like" onClick={() => setEditId(null)}>Cancelar</button>
+                    </div>
+                  </>
+                ) : (
+                  <div style={{ color: 'var(--text)', whiteSpace: 'pre-wrap' }}>{item.content}</div>
+                )}
+                <div className="comment-actions">
+                  <button
+                    type="button"
+                    className="c-like"
+                    onClick={() => toggleCommentLike(item)}
+                  >
+                    <span
+                      style={{
+                        color: item.liked_by_me ? '#ff2d55' : '#888',
+                        WebkitTextFillColor: item.liked_by_me ? '#ff2d55' : '#888',
+                        fontSize: '1.2em',
+                        fontWeight: 900,
+                        marginRight: 4,
+                      }}
+                    >
+                      {item.liked_by_me ? '♥' : '♡'}
+                    </span>
+                    {item.like_count || 0}
+                  </button>
+                  {myId && (
+                    <button type="button" className="c-like" onClick={() => { setReplyTo(item); document.getElementById('comentarios')?.scrollIntoView({ behavior: 'smooth' }) }}>
+                      Responder
+                    </button>
+                  )}
+                  {myId === item.user_id && editId !== item.id && (
+                    <>
+                      <button type="button" className="c-like" onClick={() => { setEditId(item.id); setEditText(item.content) }}>Editar</button>
+                      <button type="button" className="c-like" onClick={() => deleteOwnComment(item)}>Borrar</button>
+                    </>
+                  )}
+                </div>
               </div>
-              <div style={{ color: 'var(--text)', whiteSpace: 'pre-wrap' }}>{c.content}</div>
             </div>
-          </div>
-        ))}
+          )
+          return (
+            <div key={c.id}>
+              {renderOne(c, false)}
+              {visibleReplies.map((r) => renderOne(r, true))}
+              {replies.length > 2 && (
+                <button
+                  type="button"
+                  className="c-like"
+                  style={{ marginLeft: 40, marginBottom: 8 }}
+                  onClick={() => setExpandedReplies((prev) => ({ ...prev, [c.id]: !showAll }))}
+                >
+                  {showAll ? 'Ver menos' : `Ver más (${replies.length - 2})`}
+                </button>
+              )}
+            </div>
+          )
+        })}
       </div>
 
       <Footer />
+
+      {modal && (
+        <div className="modal-overlay" onClick={() => setModal(null)}>
+          <div className="modal-box" onClick={(e) => e.stopPropagation()}>
+            <h3>{modal.title}</h3>
+            <p style={{ margin: 0, color: 'var(--muted)' }}>{modal.body}</p>
+            <div className="modal-actions">
+              {modal.onConfirm ? (
+                <>
+                  <button type="button" className="modal-cancel" onClick={() => setModal(null)}>Cancelar</button>
+                  <button type="button" className="modal-danger" onClick={modal.onConfirm}>Confirmar</button>
+                </>
+              ) : (
+                <button type="button" className="modal-ok" onClick={() => setModal(null)}>Entendido</button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </>
   )
 }

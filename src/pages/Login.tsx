@@ -2,11 +2,24 @@ import { useState, FormEvent, ChangeEvent, useCallback, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import Cropper from 'react-easy-crop'
 import type { Area } from 'react-easy-crop'
+import { supabase, isSupabaseConfigured } from '../lib/supabase'
+
+/** login | register | recover-choose | recover-user | recover-email | recover-password | recover-new-pass */
+type Screen =
+  | 'register'
+  | 'login'
+  | 'recover-choose'
+  | 'recover-user'
+  | 'recover-email'
+  | 'recover-password'
+  | 'recover-new-pass'
 
 export default function Login() {
-  const [isLogin, setIsLogin] = useState(false)
+  const [screen, setScreen] = useState<Screen>('register')
   const [preview, setPreview] = useState('/loguito.png')
   const [error, setError] = useState('')
+  const [info, setInfo] = useState('')
+  const [loading, setLoading] = useState(false)
   const navigate = useNavigate()
 
   // Cropper
@@ -15,30 +28,32 @@ export default function Login() {
   const [crop, setCrop] = useState({ x: 0, y: 0 })
   const [zoom, setZoom] = useState(1)
   const [croppedAreaPixels, setCroppedAreaPixels] = useState<Area | null>(null)
-
-  // Redimensionar por píxeles
   const [originalWidth, setOriginalWidth] = useState(0)
   const [originalHeight, setOriginalHeight] = useState(0)
   const [resizeWidth, setResizeWidth] = useState(0)
   const [resizeHeight, setResizeHeight] = useState(0)
-
-  // Preview en vivo
   const [livePreview, setLivePreview] = useState<string | null>(null)
 
-  const validatePassword = (password: string) => {
-    return (
-      password.length >= 8 &&
-      /[A-Z]/.test(password) &&
-      /[a-z]/.test(password) &&
-      /[0-9]/.test(password)
-    )
-  }
+  // Recovery fields
+  const [recoverEmail, setRecoverEmail] = useState('')
+  const [recoverUsername, setRecoverUsername] = useState('')
+  const [recoverResult, setRecoverResult] = useState('')
+  const [newPass, setNewPass] = useState('')
+  const [newPass2, setNewPass2] = useState('')
+  const [resetProfile, setResetProfile] = useState<{
+    username?: string
+    email?: string
+    avatar_url?: string
+  } | null>(null)
+  const [askLogin, setAskLogin] = useState(false)
 
-  const onCropComplete = useCallback((_: Area, croppedAreaPixels: Area) => {
-    setCroppedAreaPixels(croppedAreaPixels)
+  const validatePassword = (password: string) =>
+    password.length >= 8 && /[A-Z]/.test(password) && /[a-z]/.test(password) && /[0-9]/.test(password)
+
+  const onCropComplete = useCallback((_: Area, area: Area) => {
+    setCroppedAreaPixels(area)
   }, [])
 
-  // Cargar dimensiones originales
   useEffect(() => {
     if (!imageSrc) return
     const img = new Image()
@@ -51,32 +66,25 @@ export default function Login() {
     }
   }, [imageSrc])
 
-  // Generar preview en vivo cada vez que cambian zoom, crop o dimensiones
   useEffect(() => {
     if (!imageSrc || !croppedAreaPixels || resizeWidth <= 0 || resizeHeight <= 0) {
       setLivePreview(null)
       return
     }
-
     const generatePreview = async () => {
       const image = new Image()
       image.src = imageSrc
       await new Promise((resolve) => (image.onload = resolve))
-
       const cropSize = Math.min(croppedAreaPixels.width, croppedAreaPixels.height)
-
-      // Canvas temporal con el recorte circular
       const tempCanvas = document.createElement('canvas')
       tempCanvas.width = cropSize
       tempCanvas.height = cropSize
       const tempCtx = tempCanvas.getContext('2d')
       if (!tempCtx) return
-
       tempCtx.beginPath()
       tempCtx.arc(cropSize / 2, cropSize / 2, cropSize / 2, 0, Math.PI * 2)
       tempCtx.closePath()
       tempCtx.clip()
-
       tempCtx.drawImage(
         image,
         croppedAreaPixels.x,
@@ -88,26 +96,44 @@ export default function Login() {
         cropSize,
         cropSize
       )
-
-      // Canvas final redimensionado
       const finalCanvas = document.createElement('canvas')
       finalCanvas.width = resizeWidth
       finalCanvas.height = resizeHeight
       const finalCtx = finalCanvas.getContext('2d')
       if (!finalCtx) return
-
       finalCtx.drawImage(tempCanvas, 0, 0, resizeWidth, resizeHeight)
-
       setLivePreview(finalCanvas.toDataURL('image/jpeg', 0.9))
     }
-
     generatePreview()
   }, [imageSrc, croppedAreaPixels, resizeWidth, resizeHeight, zoom])
 
-  const handleApply = () => {
-    if (livePreview) {
-      setPreview(livePreview)
+  // Enlace de recovery de Supabase
+  useEffect(() => {
+    const hash = window.location.hash
+    if (hash.includes('type=recovery') || hash.includes('type=password_recovery')) {
+      setScreen('recover-new-pass')
+      setInfo('Enlace verificado. Escribe tu nueva contraseña.')
+      ;(async () => {
+        if (!supabase) return
+        const { data: { user } } = await supabase.auth.getUser()
+        if (user) {
+          const { data: p } = await supabase
+            .from('profiles')
+            .select('username, avatar_url, email')
+            .eq('id', user.id)
+            .maybeSingle()
+          setResetProfile({
+            username: p?.username || '',
+            email: p?.email || user.email || '',
+            avatar_url: p?.avatar_url || '/loguito.png',
+          })
+        }
+      })()
     }
+  }, [])
+
+  const handleApply = () => {
+    if (livePreview) setPreview(livePreview)
     setShowCropper(false)
     setImageSrc(null)
     setLivePreview(null)
@@ -122,25 +148,89 @@ export default function Login() {
 
   const handleProfilePic = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
-    if (file) {
-      const reader = new FileReader()
-      reader.onload = () => {
-        if (typeof reader.result === 'string') {
-          setImageSrc(reader.result)
-          setShowCropper(true)
-          setZoom(1)
-          setCrop({ x: 0, y: 0 })
-          setLivePreview(null)
-        }
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = () => {
+      if (typeof reader.result === 'string') {
+        setImageSrc(reader.result)
+        setShowCropper(true)
+        setZoom(1)
+        setCrop({ x: 0, y: 0 })
+        setLivePreview(null)
       }
-      reader.readAsDataURL(file)
+    }
+    reader.readAsDataURL(file)
+  }
+
+  const uploadAvatarIfNeeded = async (userId: string, pic: string): Promise<string> => {
+    if (!pic) return '/loguito.png'
+    if (!pic.startsWith('data:')) return pic
+    if (!supabase) return pic
+    try {
+      const res = await fetch(pic)
+      const blob = await res.blob()
+      const ext = blob.type.includes('png') ? 'png' : 'jpg'
+      const path = `avatars/${userId}.${ext}`
+      const { error: upErr } = await supabase.storage
+        .from('comics')
+        .upload(path, blob, { upsert: true, contentType: blob.type || 'image/jpeg' })
+      if (upErr) {
+        console.warn('Avatar upload:', upErr.message)
+        return pic
+      }
+      return supabase.storage.from('comics').getPublicUrl(path).data.publicUrl
+    } catch {
+      return pic
     }
   }
 
-  const handleRegister = (e: FormEvent) => {
+  const persistSession = (profile: {
+    id?: string
+    username?: string | null
+    email?: string | null
+    age?: string | number | null
+    avatar_url?: string | null
+    role?: string | null
+    description?: string | null
+    banner?: string | null
+    show_age?: boolean | null
+  }) => {
+    const username = profile.username || ''
+    const email = profile.email || ''
+    const age = profile.age != null ? String(profile.age) : ''
+    const profilePic = profile.avatar_url || '/loguito.png'
+    const role = profile.role || 'user'
+    const currentUser = {
+      id: profile.id,
+      username,
+      email,
+      age,
+      profilePic,
+      banner: profile.banner || '',
+      description: profile.description || '',
+      showAge: profile.show_age !== false,
+      role,
+    }
+    localStorage.setItem('currentUser', JSON.stringify(currentUser))
+    localStorage.setItem('username', username)
+    localStorage.setItem('email', email)
+    localStorage.setItem('age', age)
+    localStorage.setItem('profilePic', profilePic)
+    localStorage.setItem('role', role)
+    window.dispatchEvent(new Event('profileUpdated'))
+  }
+
+  const go = (s: Screen) => {
+    setScreen(s)
+    setError('')
+    setInfo('')
+    setRecoverResult('')
+  }
+
+  const handleRegister = async (e: FormEvent) => {
     e.preventDefault()
     setError('')
-
+    setLoading(true)
     const form = e.target as HTMLFormElement
     const username = (form.elements.namedItem('username') as HTMLInputElement).value.trim()
     const email = (form.elements.namedItem('email') as HTMLInputElement).value.trim().toLowerCase()
@@ -150,70 +240,289 @@ export default function Login() {
 
     if (!username || !email || !password || !confirm || !age) {
       setError('Por favor completa todos los campos.')
+      setLoading(false)
       return
     }
-
     if (password !== confirm) {
       setError('Las contraseñas no coinciden.')
+      setLoading(false)
       return
     }
-
     if (!validatePassword(password)) {
+      setError('La contraseña debe tener mínimo 8 caracteres, 1 mayúscula, 1 minúscula y 1 número.')
+      setLoading(false)
+      return
+    }
+    if (!isSupabaseConfigured || !supabase) {
+      setError('Supabase no está configurado. Revisa el archivo .env y reinicia el servidor.')
+      setLoading(false)
+      return
+    }
+    try {
+      const { data: existing } = await supabase
+        .from('profiles')
+        .select('id')
+        .ilike('username', username)
+        .maybeSingle()
+      if (existing) {
+        setError('Ese nombre de usuario ya está en uso. Elige otro.')
+        setLoading(false)
+        return
+      }
+      const { data: authData, error: signUpErr } = await supabase.auth.signUp({
+        email,
+        password,
+        options: { data: { username, age: Number(age) || age } },
+      })
+      if (signUpErr) {
+        setError(signUpErr.message)
+        setLoading(false)
+        return
+      }
+      const user = authData.user
+      if (!user) {
+        setError('No se pudo crear la cuenta. Revisa si el correo ya está registrado.')
+        setLoading(false)
+        return
+      }
+      const avatarUrl = await uploadAvatarIfNeeded(user.id, preview)
+      await supabase.from('profiles').upsert(
+        {
+          id: user.id,
+          email,
+          username,
+          age: Number(age) || age,
+          avatar_url: avatarUrl,
+          role: 'user',
+          show_age: true,
+          description: '',
+          banner: '',
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'id' }
+      )
+      if (authData.session) {
+        persistSession({
+          id: user.id,
+          username,
+          email,
+          age,
+          avatar_url: avatarUrl,
+          role: 'user',
+          show_age: true,
+        })
+        setLoading(false)
+        navigate('/home')
+        return
+      }
+      setLoading(false)
+      go('login')
+      setInfo('Cuenta creada. Si hace falta, confirma el correo e inicia sesión.')
+    } catch (err: any) {
+      setError(err?.message || 'Error al registrar.')
+      setLoading(false)
+    }
+  }
+
+  const handleLogin = async (e: FormEvent) => {
+    e.preventDefault()
+    setError('')
+    setLoading(true)
+    const form = e.target as HTMLFormElement
+    const identifier = (form.elements.namedItem('email') as HTMLInputElement).value.trim()
+    const password = (form.elements.namedItem('password') as HTMLInputElement).value
+    if (!identifier || !password) {
+      setError('Introduce usuario o correo, y la contraseña.')
+      setLoading(false)
+      return
+    }
+    if (!isSupabaseConfigured || !supabase) {
+      setError('Supabase no está configurado.')
+      setLoading(false)
+      return
+    }
+    try {
+      let email = identifier.toLowerCase()
+      if (!identifier.includes('@')) {
+        const { data: byUser } = await supabase
+          .from('profiles')
+          .select('email')
+          .ilike('username', identifier)
+          .maybeSingle()
+        if (!byUser?.email) {
+          setError('No existe una cuenta con ese nombre de usuario.')
+          setLoading(false)
+          return
+        }
+        email = byUser.email
+      }
+      const { data, error: signInErr } = await supabase.auth.signInWithPassword({ email, password })
+      if (signInErr) {
+        setError(
+          signInErr.message.includes('Invalid login')
+            ? 'Usuario/correo o contraseña incorrectos.'
+            : signInErr.message
+        )
+        setLoading(false)
+        return
+      }
+      const user = data.user
+      if (!user) {
+        setError('No se pudo iniciar sesión.')
+        setLoading(false)
+        return
+      }
+      const { data: profile } = await supabase.from('profiles').select('*').eq('id', user.id).single()
+      if (profile) persistSession(profile)
+      else {
+        const username = (user.user_metadata?.username as string) || email.split('@')[0] || 'Usuario'
+        persistSession({
+          id: user.id,
+          email: user.email || email,
+          username,
+          role: 'user',
+          avatar_url: '/loguito.png',
+        })
+      }
+      setLoading(false)
+      navigate('/home')
+    } catch (err: any) {
+      setError(err?.message || 'Error al iniciar sesión.')
+      setLoading(false)
+    }
+  }
+
+  const recoverUsernameByEmail = async (e: FormEvent) => {
+    e.preventDefault()
+    setError('')
+    setRecoverResult('')
+    if (!recoverEmail.trim() || !supabase) {
+      setError('Escribe tu correo.')
+      return
+    }
+    setLoading(true)
+    try {
+      const { data } = await supabase
+        .from('profiles')
+        .select('username')
+        .ilike('email', recoverEmail.trim().toLowerCase())
+        .maybeSingle()
+      setRecoverResult(
+        data?.username
+          ? `El usuario vinculado a ese correo es: ${data.username}`
+          : 'No encontramos un usuario con ese correo.'
+      )
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const recoverEmailByUsername = async (e: FormEvent) => {
+    e.preventDefault()
+    setError('')
+    setRecoverResult('')
+    if (!recoverUsername.trim() || !supabase) {
+      setError('Escribe tu usuario.')
+      return
+    }
+    setLoading(true)
+    try {
+      const { data } = await supabase
+        .from('profiles')
+        .select('email')
+        .ilike('username', recoverUsername.trim())
+        .maybeSingle()
+      if (data?.email) {
+        const [local, domain] = data.email.split('@')
+        const masked =
+          (local && local.length > 2 ? local[0] + '***' + local.slice(-1) : '***') +
+          '@' +
+          (domain || '***')
+        setRecoverResult(`El correo vinculado es: ${masked}`)
+      } else {
+        setRecoverResult('No encontramos un correo para ese usuario.')
+      }
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const sendPasswordReset = async (e: FormEvent) => {
+    e.preventDefault()
+    setError('')
+    setInfo('')
+    if (!recoverEmail.trim() || !supabase) {
+      setError('Escribe tu correo.')
+      return
+    }
+    setLoading(true)
+    try {
+      const { error: err } = await supabase.auth.resetPasswordForEmail(
+        recoverEmail.trim().toLowerCase(),
+        { redirectTo: window.location.origin + '/login' }
+      )
+      if (err) setError(err.message)
+      else {
+        setInfo('Te enviamos un enlace a tu correo. Ábrelo para elegir una nueva contraseña.')
+        const { data: p } = await supabase
+          .from('profiles')
+          .select('username, email, avatar_url')
+          .ilike('email', recoverEmail.trim().toLowerCase())
+          .maybeSingle()
+        if (p) {
+          setResetProfile({
+            username: p.username || '',
+            email: p.email || recoverEmail,
+            avatar_url: p.avatar_url || '/loguito.png',
+          })
+        }
+      }
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const updatePassword = async (e: FormEvent) => {
+    e.preventDefault()
+    setError('')
+    if (!validatePassword(newPass)) {
       setError('La contraseña debe tener mínimo 8 caracteres, 1 mayúscula, 1 minúscula y 1 número.')
       return
     }
-
-    const existingUsers = JSON.parse(localStorage.getItem('users') || '[]')
-    if (existingUsers.some((u: any) => u.email === email)) {
-      setError('Este correo ya está registrado.')
+    if (newPass !== newPass2) {
+      setError('Las contraseñas no coinciden.')
       return
     }
-
-    const newUser = {
-      username,
-      email,
-      age,
-      profilePic: preview,
-      banner: '',
-      description: '',
-      showAge: true,
-      role: 'user',
-      createdAt: new Date().toISOString(),
+    if (!supabase) return
+    setLoading(true)
+    try {
+      const { error: err } = await supabase.auth.updateUser({ password: newPass })
+      if (err) {
+        setError(err.message + ' — Abre primero el enlace del correo.')
+        setLoading(false)
+        return
+      }
+      setInfo('Contraseña actualizada correctamente.')
+      setAskLogin(true)
+    } finally {
+      setLoading(false)
     }
-
-    existingUsers.push(newUser)
-    localStorage.setItem('users', JSON.stringify(existingUsers))
-    localStorage.setItem('currentUser', JSON.stringify(newUser))
-    localStorage.setItem('username', username)
-    localStorage.setItem('email', email)
-    localStorage.setItem('age', age)
-    localStorage.setItem('profilePic', preview)
-
-    navigate('/home')
   }
 
-  const handleLogin = (e: FormEvent) => {
-    e.preventDefault()
-    setError('')
-
-    const form = e.target as HTMLFormElement
-    const email = (form.elements.namedItem('email') as HTMLInputElement).value.trim().toLowerCase()
-
-    const existingUsers = JSON.parse(localStorage.getItem('users') || '[]')
-    const user = existingUsers.find((u: any) => u.email === email)
-
-    if (!user) {
-      setError('Correo o contraseña incorrectos.')
+  const goHomeAfterReset = async () => {
+    if (!supabase) {
+      go('login')
       return
     }
-
-    localStorage.setItem('currentUser', JSON.stringify(user))
-    localStorage.setItem('username', user.username)
-    localStorage.setItem('email', user.email)
-    localStorage.setItem('age', user.age || '')
-    localStorage.setItem('profilePic', user.profilePic || '/loguito.png')
-
-    navigate('/home')
+    const { data: { user } } = await supabase.auth.getUser()
+    if (user) {
+      const { data: profile } = await supabase.from('profiles').select('*').eq('id', user.id).single()
+      if (profile) persistSession(profile)
+      navigate('/home')
+    } else {
+      go('login')
+      setInfo('Inicia sesión con tu nueva contraseña.')
+    }
   }
 
   return (
@@ -225,16 +534,10 @@ export default function Login() {
           font-weight: normal;
           font-style: normal;
         }
-
         * { box-sizing: border-box; }
-
         html, body {
-          margin: 0;
-          padding: 0;
-          height: 100%;
-          overflow: hidden;
+          margin: 0; padding: 0; height: 100%; overflow: hidden;
         }
-
         body {
           background-image: url('/Fondodeweb.png');
           background-position: center;
@@ -246,7 +549,6 @@ export default function Login() {
           position: relative;
           color: white;
         }
-
         body::before {
           content: '';
           position: fixed;
@@ -254,7 +556,6 @@ export default function Login() {
           background-color: rgba(0, 0, 0, 0.72);
           z-index: 0;
         }
-
         .auth-wrapper {
           position: relative;
           z-index: 1;
@@ -266,7 +567,6 @@ export default function Login() {
           align-items: center;
           min-height: 100vh;
         }
-
         .registration-container,
         .login-container {
           background-color: rgba(255, 255, 255, 0.92);
@@ -278,12 +578,10 @@ export default function Login() {
           animation: slideIn 0.45s cubic-bezier(0.22, 1, 0.36, 1);
           width: 100%;
         }
-
         @keyframes slideIn {
           from { opacity: 0; transform: translateY(24px) scale(0.97); }
           to { opacity: 1; transform: translateY(0) scale(1); }
         }
-
         h1 {
           text-align: center;
           color: rgb(128, 129, 212);
@@ -292,21 +590,17 @@ export default function Login() {
           font-size: 1.55rem;
           margin: 0 0 18px 0;
         }
-
         @keyframes neonGlow {
           from { text-shadow: 0 0 12px #FFFF00, 0 0 20px #FF8500; }
           to { text-shadow: 0 0 20px #FFFF00, 0 0 32px #FF8500; }
         }
-
         .input-group { margin-bottom: 13px; }
-
         label {
           display: block;
           margin-bottom: 4px;
           color: #0a0a0a;
           font-size: 13px;
         }
-
         input[type="text"],
         input[type="email"],
         input[type="password"],
@@ -320,18 +614,12 @@ export default function Login() {
           border-radius: 7px;
           font-family: 'Laffayette Comic Pro', cursive, Arial, sans-serif;
         }
-
         input:focus, select:focus {
           outline: none;
           background: rgb(82, 80, 97);
           border-color: #222;
         }
-
-        .profile-pic-group {
-          text-align: center;
-          margin-bottom: 14px;
-        }
-
+        .profile-pic-group { text-align: center; margin-bottom: 14px; }
         .profile-pic-wrapper {
           position: relative;
           width: 100px;
@@ -342,26 +630,11 @@ export default function Login() {
           border: 4px solid #FFFF00;
           box-shadow: 0 0 12px #FFFF00;
           cursor: pointer;
-          transition: box-shadow 0.3s;
         }
-
-        .profile-pic-wrapper:hover {
-          box-shadow: 0 0 18px #FFFF00, 0 0 28px #FF8500;
-        }
-
-        #profile-pic-preview {
-          width: 100%;
-          height: 100%;
-          object-fit: cover;
-        }
-
+        #profile-pic-preview { width: 100%; height: 100%; object-fit: cover; }
         input[type="file"] {
-          position: absolute;
-          inset: 0;
-          opacity: 0;
-          cursor: pointer;
+          position: absolute; inset: 0; opacity: 0; cursor: pointer;
         }
-
         button[type="submit"],
         .toggle-button {
           width: 100%;
@@ -376,149 +649,102 @@ export default function Login() {
           box-shadow: 0 0 10px #FFFF00;
           transition: all 0.25s;
         }
-
-        button[type="submit"] {
-          margin-top: 8px;
-          margin-bottom: 14px;
-        }
-
-        .toggle-button {
-          margin-top: 0;
-        }
-
+        button[type="submit"] { margin-top: 8px; margin-bottom: 14px; }
+        .toggle-button { margin-top: 0; margin-bottom: 10px; }
         button[type="submit"]:hover,
         .toggle-button:hover {
           transform: scale(1.025);
           box-shadow: 0 0 18px #FFFF00, 0 0 26px #FFD700;
         }
-
+        button[type="submit"]:disabled,
+        .toggle-button:disabled {
+          opacity: 0.65; cursor: not-allowed; transform: none;
+        }
         .error-message {
-          background: #ff4d4d;
-          color: white;
-          padding: 10px 12px;
-          border-radius: 8px;
-          margin-bottom: 12px;
-          font-size: 13px;
-          text-align: center;
+          background: #ff4d4d; color: white; padding: 10px 12px;
+          border-radius: 8px; margin-bottom: 12px; font-size: 13px; text-align: center;
         }
-
-        /* ===== MODAL CROPPER ===== */
-        .cropper-overlay {
-          position: fixed;
-          inset: 0;
-          background: rgba(0, 0, 0, 0.88);
-          z-index: 1000;
-          display: flex;
-          justify-content: center;
-          align-items: center;
-          padding: 12px;
+        .info-message {
+          background: #2d6a4f; color: white; padding: 10px 12px;
+          border-radius: 8px; margin-bottom: 12px; font-size: 13px; text-align: center;
         }
-
-        .cropper-modal {
-          background: rgba(255, 255, 255, 0.96);
-          border: 5px solid #FFFF00;
-          border-radius: 16px;
-          width: 100%;
-          max-width: 420px;
-          overflow: hidden;
-          box-shadow: 0 0 35px rgba(255, 255, 0, 0.25);
-        }
-
-        .cropper-header {
-          padding: 14px 16px;
-          background: #333;
-          color: white;
-          font-size: 1.15rem;
-          text-align: center;
-          border-bottom: 4px solid #FFFF00;
-        }
-
-        .cropper-area {
-          position: relative;
-          width: 100%;
-          height: 220px;
-          background: #111;
-        }
-
-        .cropper-controls {
-          padding: 14px 16px 6px;
-          display: flex;
-          flex-direction: column;
-          gap: 12px;
-        }
-
-        .cropper-controls label {
-          color: #222;
-          font-size: 13px;
-          margin-bottom: 2px;
+        .recover-link {
           display: block;
-        }
-
-        .cropper-controls input[type="range"] {
           width: 100%;
-          accent-color: #FFD700;
-        }
-
-        .pixel-inputs {
-          display: flex;
-          gap: 10px;
-        }
-
-        .pixel-inputs > div {
-          flex: 1;
-        }
-
-        .pixel-inputs input[type="number"] {
-          width: 100%;
+          text-align: center;
+          margin-top: 6px;
+          margin-bottom: 4px;
+          background: none;
+          border: none;
+          color: #555;
+          font-size: 13px;
+          font-family: inherit;
+          text-decoration: underline;
+          cursor: pointer;
           padding: 8px;
+        }
+        .recover-link:hover { color: #222; }
+        .recover-option {
+          width: 100%;
+          padding: 12px;
+          margin-bottom: 10px;
           border: 3px solid #494949;
-          border-radius: 6px;
+          border-radius: 8px;
           background: rgb(102, 99, 120);
           color: #0a0a0a;
+          font-family: inherit;
           font-size: 14px;
-          font-family: 'Laffayette Comic Pro', cursive, Arial, sans-serif;
-        }
-
-        .live-preview-box {
-          text-align: center;
-          padding: 10px 0 4px;
-        }
-
-        .live-preview-box img {
-          width: 90px;
-          height: 90px;
-          border-radius: 50%;
-          border: 3px solid #FFFF00;
-          object-fit: cover;
-          box-shadow: 0 0 10px #FFFF00;
-        }
-
-        .cropper-actions {
-          display: flex;
-          gap: 8px;
-          padding: 8px 16px 16px;
-          flex-wrap: wrap;
-        }
-
-        .cropper-actions button {
-          flex: 1;
-          min-width: 100px;
-          padding: 11px 8px;
-          border: none;
-          border-radius: 8px;
-          font-family: 'Laffayette Comic Pro', cursive, Arial, sans-serif;
-          font-size: 13px;
           cursor: pointer;
+          text-align: left;
         }
-
+        .recover-option:hover { border-color: #FFFF00; }
+        .reset-header { text-align: center; margin-bottom: 14px; }
+        .reset-header img {
+          width: 84px; height: 84px; border-radius: 50%;
+          border: 4px solid #FFFF00; object-fit: cover; margin-bottom: 8px;
+        }
+        .reset-header .name { color: #222; font-weight: bold; font-size: 1.1rem; }
+        .reset-header .mail { color: #555; font-size: 13px; }
+        .cropper-overlay {
+          position: fixed; inset: 0; background: rgba(0, 0, 0, 0.88);
+          z-index: 1000; display: flex; justify-content: center; align-items: center; padding: 12px;
+        }
+        .cropper-modal {
+          background: rgba(255, 255, 255, 0.96);
+          border: 5px solid #FFFF00; border-radius: 16px;
+          width: 100%; max-width: 420px; overflow: hidden;
+        }
+        .cropper-header {
+          padding: 14px 16px; background: #333; color: white;
+          font-size: 1.15rem; text-align: center; border-bottom: 4px solid #FFFF00;
+        }
+        .cropper-area { position: relative; width: 100%; height: 220px; background: #111; }
+        .cropper-controls { padding: 14px 16px 6px; display: flex; flex-direction: column; gap: 12px; }
+        .cropper-controls label { color: #222; font-size: 13px; margin-bottom: 2px; display: block; }
+        .cropper-controls input[type="range"] { width: 100%; accent-color: #FFD700; }
+        .pixel-inputs { display: flex; gap: 10px; }
+        .pixel-inputs > div { flex: 1; }
+        .pixel-inputs input[type="number"] {
+          width: 100%; padding: 8px; border: 3px solid #494949; border-radius: 6px;
+          background: rgb(102, 99, 120); color: #0a0a0a; font-size: 14px; font-family: inherit;
+        }
+        .live-preview-box { text-align: center; padding: 10px 0 4px; }
+        .live-preview-box img {
+          width: 90px; height: 90px; border-radius: 50%; border: 3px solid #FFFF00; object-fit: cover;
+        }
+        .cropper-actions {
+          display: flex; gap: 8px; padding: 8px 16px 16px; flex-wrap: wrap;
+        }
+        .cropper-actions button {
+          flex: 1; min-width: 100px; padding: 11px 8px; border: none; border-radius: 8px;
+          font-family: inherit; font-size: 13px; cursor: pointer;
+        }
         .btn-cancel { background: #666; color: white; }
         .btn-auto { background: #4a4a8a; color: white; }
         .btn-apply {
-          background: linear-gradient(135deg, #FFFF00, #FFD700);
-          color: black;
+          background: linear-gradient(135deg, #FFFF00, #FFD700); color: black;
           box-shadow: 0 0 10px #FFFF00;
         }
-
         @media (max-width: 480px) {
           .auth-wrapper { max-width: 100%; padding: 8px; }
           .registration-container, .login-container { padding: 20px 14px; }
@@ -528,104 +754,223 @@ export default function Login() {
       `}</style>
 
       <div className="auth-wrapper">
-        {!isLogin ? (
+        {/* REGISTRO */}
+        {screen === 'register' && (
           <div className="registration-container" key="register">
             <h1>Popu-Club</h1>
-
             {error && <div className="error-message">{error}</div>}
-
+            {info && <div className="info-message">{info}</div>}
             <form onSubmit={handleRegister}>
               <div className="profile-pic-group">
                 <div className="profile-pic-wrapper">
                   <img id="profile-pic-preview" src={preview} alt="Foto de perfil" />
-                  <input type="file" accept="image/*" onChange={handleProfilePic} />
+                  <input type="file" accept="image/*" onChange={handleProfilePic} disabled={loading} />
                 </div>
               </div>
-
               <div className="input-group">
                 <label htmlFor="age">Selecciona tu edad:</label>
-                <select id="age" name="age" required>
+                <select id="age" name="age" required disabled={loading}>
                   <option value="">Selecciona...</option>
                   {Array.from({ length: 35 }, (_, i) => i + 11).map((n) => (
                     <option key={n} value={n}>{n}</option>
                   ))}
                 </select>
               </div>
-
               <div className="input-group">
                 <label htmlFor="username">Nombre de usuario:</label>
-                <input type="text" id="username" name="username" required />
+                <input type="text" id="username" name="username" required disabled={loading} />
               </div>
-
               <div className="input-group">
                 <label htmlFor="email">Correo electrónico:</label>
-                <input type="email" id="email" name="email" required />
+                <input type="email" id="email" name="email" required disabled={loading} />
               </div>
-
               <div className="input-group">
                 <label htmlFor="password">Contraseña:</label>
-                <input type="password" id="password" name="password" required />
+                <input type="password" id="password" name="password" required disabled={loading} />
               </div>
-
               <div className="input-group">
                 <label htmlFor="confirm_password">Confirmar contraseña:</label>
-                <input type="password" id="confirm_password" name="confirm_password" required />
+                <input type="password" id="confirm_password" name="confirm_password" required disabled={loading} />
               </div>
-
-              <button type="submit">Registrar</button>
-
-              <button
-                type="button"
-                className="toggle-button"
-                onClick={() => {
-                  setIsLogin(true)
-                  setError('')
-                }}
-              >
+              <button type="submit" disabled={loading}>
+                {loading ? 'Creando cuenta…' : 'Registrar'}
+              </button>
+              <button type="button" className="toggle-button" disabled={loading} onClick={() => go('login')}>
                 ¡Ya tengo cuenta!
               </button>
             </form>
           </div>
-        ) : (
+        )}
+
+        {/* LOGIN */}
+        {screen === 'login' && (
           <div className="login-container" key="login">
             <h1>Iniciar Sesión</h1>
-
             {error && <div className="error-message">{error}</div>}
-
+            {info && <div className="info-message">{info}</div>}
             <form onSubmit={handleLogin}>
               <div className="input-group">
-                <label htmlFor="login-email">Correo electrónico:</label>
-                <input type="email" id="login-email" name="email" required />
+                <label htmlFor="login-email">Usuario o correo:</label>
+                <input
+                  type="text"
+                  id="login-email"
+                  name="email"
+                  required
+                  disabled={loading}
+                  placeholder="nombre de usuario o correo"
+                  autoComplete="username"
+                />
               </div>
-
               <div className="input-group">
                 <label htmlFor="login-password">Contraseña:</label>
-                <input type="password" id="login-password" name="password" required />
+                <input type="password" id="login-password" name="password" required disabled={loading} />
               </div>
-
-              <button type="submit">Iniciar Sesión</button>
-
-              <button
-                type="button"
-                className="toggle-button"
-                onClick={() => {
-                  setIsLogin(false)
-                  setError('')
-                }}
-              >
+              <button type="submit" disabled={loading}>
+                {loading ? 'Entrando…' : 'Iniciar Sesión'}
+              </button>
+              <button type="button" className="toggle-button" disabled={loading} onClick={() => go('register')}>
                 ¡No tengo cuenta!
               </button>
             </form>
+            {/* Separado para no chocar con los botones principales */}
+            <button type="button" className="recover-link" onClick={() => go('recover-choose')}>
+              ¿Olvidaste usuario, correo o contraseña?
+            </button>
+          </div>
+        )}
+
+        {/* RECUPERAR — elegir */}
+        {screen === 'recover-choose' && (
+          <div className="login-container" key="recover-choose">
+            <h1>¿Qué quieres recordar?</h1>
+            {error && <div className="error-message">{error}</div>}
+            <button type="button" className="recover-option" onClick={() => go('recover-user')}>
+              👤 Usuario — tengo el correo
+            </button>
+            <button type="button" className="recover-option" onClick={() => go('recover-email')}>
+              ✉️ Correo — tengo el usuario
+            </button>
+            <button type="button" className="recover-option" onClick={() => go('recover-password')}>
+              🔑 Contraseña — enviarme enlace
+            </button>
+            <button type="button" className="toggle-button" onClick={() => go('login')}>
+              Volver a iniciar sesión
+            </button>
+          </div>
+        )}
+
+        {/* Recordar usuario */}
+        {screen === 'recover-user' && (
+          <div className="login-container" key="recover-user">
+            <h1>Recordar usuario</h1>
+            {error && <div className="error-message">{error}</div>}
+            {recoverResult && <div className="info-message">{recoverResult}</div>}
+            <form onSubmit={recoverUsernameByEmail}>
+              <div className="input-group">
+                <label>Correo de tu cuenta</label>
+                <input
+                  type="email"
+                  value={recoverEmail}
+                  onChange={(e) => setRecoverEmail(e.target.value)}
+                  required
+                  disabled={loading}
+                />
+              </div>
+              <button type="submit" disabled={loading}>{loading ? 'Buscando…' : 'Buscar usuario'}</button>
+            </form>
+            <button type="button" className="toggle-button" onClick={() => go('recover-choose')}>Otras opciones</button>
+            <button type="button" className="recover-link" onClick={() => go('login')}>Volver a iniciar sesión</button>
+          </div>
+        )}
+
+        {/* Recordar correo */}
+        {screen === 'recover-email' && (
+          <div className="login-container" key="recover-email">
+            <h1>Recordar correo</h1>
+            {error && <div className="error-message">{error}</div>}
+            {recoverResult && <div className="info-message">{recoverResult}</div>}
+            <form onSubmit={recoverEmailByUsername}>
+              <div className="input-group">
+                <label>Nombre de usuario</label>
+                <input
+                  type="text"
+                  value={recoverUsername}
+                  onChange={(e) => setRecoverUsername(e.target.value)}
+                  required
+                  disabled={loading}
+                />
+              </div>
+              <button type="submit" disabled={loading}>{loading ? 'Buscando…' : 'Buscar correo'}</button>
+            </form>
+            <button type="button" className="toggle-button" onClick={() => go('recover-choose')}>Otras opciones</button>
+            <button type="button" className="recover-link" onClick={() => go('login')}>Volver a iniciar sesión</button>
+          </div>
+        )}
+
+        {/* Reset password email */}
+        {screen === 'recover-password' && (
+          <div className="login-container" key="recover-password">
+            <h1>Nueva contraseña</h1>
+            {error && <div className="error-message">{error}</div>}
+            {info && <div className="info-message">{info}</div>}
+            <form onSubmit={sendPasswordReset}>
+              <div className="input-group">
+                <label>Correo de la cuenta</label>
+                <input
+                  type="email"
+                  value={recoverEmail}
+                  onChange={(e) => setRecoverEmail(e.target.value)}
+                  required
+                  disabled={loading}
+                />
+              </div>
+              <button type="submit" disabled={loading}>{loading ? 'Enviando…' : 'Enviar enlace'}</button>
+            </form>
+            <button type="button" className="toggle-button" onClick={() => go('recover-choose')}>Otras opciones</button>
+            <button type="button" className="recover-link" onClick={() => go('login')}>Volver a iniciar sesión</button>
+          </div>
+        )}
+
+        {/* Nueva contraseña tras el enlace */}
+        {screen === 'recover-new-pass' && (
+          <div className="login-container" key="recover-new-pass">
+            <h1>Elige nueva contraseña</h1>
+            {resetProfile && (
+              <div className="reset-header">
+                <img src={resetProfile.avatar_url || '/loguito.png'} alt="" />
+                <div className="name">{resetProfile.username || 'Usuario'}</div>
+                <div className="mail">{resetProfile.email}</div>
+              </div>
+            )}
+            {error && <div className="error-message">{error}</div>}
+            {info && <div className="info-message">{info}</div>}
+            {!askLogin ? (
+              <form onSubmit={updatePassword}>
+                <div className="input-group">
+                  <label>Nueva contraseña</label>
+                  <input type="password" value={newPass} onChange={(e) => setNewPass(e.target.value)} required disabled={loading} />
+                </div>
+                <div className="input-group">
+                  <label>Confirmar contraseña</label>
+                  <input type="password" value={newPass2} onChange={(e) => setNewPass2(e.target.value)} required disabled={loading} />
+                </div>
+                <button type="submit" disabled={loading}>{loading ? 'Guardando…' : 'Continuar'}</button>
+              </form>
+            ) : (
+              <>
+                <p style={{ color: '#333', textAlign: 'center', fontSize: 14 }}>¿Quieres iniciar sesión ahora?</p>
+                <button type="button" onClick={goHomeAfterReset}>Sí, ir al inicio</button>
+                <button type="button" className="toggle-button" onClick={() => go('login')}>Más tarde</button>
+              </>
+            )}
           </div>
         )}
       </div>
 
-      {/* MODAL */}
       {showCropper && imageSrc && (
         <div className="cropper-overlay">
           <div className="cropper-modal">
             <div className="cropper-header">Ajusta tu foto de perfil</div>
-
             <div className="cropper-area">
               <Cropper
                 image={imageSrc}
@@ -639,51 +984,26 @@ export default function Login() {
                 onCropComplete={onCropComplete}
               />
             </div>
-
             <div className="cropper-controls">
               <div>
                 <label>Zoom (acercar / alejar)</label>
-                <input
-                  type="range"
-                  min={1}
-                  max={3}
-                  step={0.05}
-                  value={zoom}
-                  onChange={(e) => setZoom(Number(e.target.value))}
-                />
+                <input type="range" min={1} max={3} step={0.05} value={zoom} onChange={(e) => setZoom(Number(e.target.value))} />
               </div>
-
               <div>
                 <label>Redimensionar (píxeles)</label>
                 <div className="pixel-inputs">
                   <div>
                     <label style={{ fontSize: 11 }}>Ancho</label>
-                    <input
-                      type="number"
-                      min={50}
-                      max={2000}
-                      value={resizeWidth}
-                      onChange={(e) => setResizeWidth(Number(e.target.value) || 0)}
-                    />
+                    <input type="number" min={50} max={2000} value={resizeWidth} onChange={(e) => setResizeWidth(Number(e.target.value) || 0)} />
                   </div>
                   <div>
                     <label style={{ fontSize: 11 }}>Alto</label>
-                    <input
-                      type="number"
-                      min={50}
-                      max={2000}
-                      value={resizeHeight}
-                      onChange={(e) => setResizeHeight(Number(e.target.value) || 0)}
-                    />
+                    <input type="number" min={50} max={2000} value={resizeHeight} onChange={(e) => setResizeHeight(Number(e.target.value) || 0)} />
                   </div>
                 </div>
-                <small style={{ color: '#555', fontSize: 11 }}>
-                  Original: {originalWidth} × {originalHeight} px
-                </small>
+                <small style={{ color: '#555', fontSize: 11 }}>Original: {originalWidth} × {originalHeight} px</small>
               </div>
             </div>
-
-            {/* PREVIEW EN VIVO */}
             {livePreview && (
               <div className="live-preview-box">
                 <img src={livePreview} alt="Vista previa" />
@@ -692,17 +1012,10 @@ export default function Login() {
                 </div>
               </div>
             )}
-
             <div className="cropper-actions">
-              <button className="btn-cancel" onClick={() => setShowCropper(false)}>
-                Cancelar
-              </button>
-              <button className="btn-auto" onClick={handleAutoAdjust}>
-                Auto ajustar
-              </button>
-              <button className="btn-apply" onClick={handleApply}>
-                Aplicar
-              </button>
+              <button className="btn-cancel" onClick={() => setShowCropper(false)}>Cancelar</button>
+              <button className="btn-auto" onClick={handleAutoAdjust}>Auto ajustar</button>
+              <button className="btn-apply" onClick={handleApply}>Aplicar</button>
             </div>
           </div>
         </div>
