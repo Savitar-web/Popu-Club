@@ -1,0 +1,9 @@
+android
+electron-dist
+electron
+node_modules
+.git
+*.exe
+*.dmg
+*.AppImage
+*.log
