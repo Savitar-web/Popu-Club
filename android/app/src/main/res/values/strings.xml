@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Popu-Club</string>
+    <string name="title_activity_main">Popu-Club</string>
+    <string name="package_name">com.cherrybless.popuclub</string>
+    <string name="custom_url_scheme">com.cherrybless.popuclub</string>
+</resources>

@@ -6,48 +6,48 @@ export default function Header() {
       <style>{`
         .main-header {
           background: var(--header);
-          padding: 15px 30px;
+          padding: 8px 28px;
           display: flex;
           align-items: center;
           border-bottom: 5px solid #ffffff;
         }
 
-        .main-header img {
-          max-height: 60px;
+        .main-header .logo-icon {
+          max-height: 88px;
           transition: transform 0.4s ease, filter 0.4s ease;
           filter: drop-shadow(0 0 8px #000);
           cursor: pointer;
         }
 
-        .main-header img:hover {
+        .main-header .logo-icon:hover {
           transform: scale(1.1) rotate(-5deg);
           filter: drop-shadow(0 0 14px #000);
         }
 
-        .main-header h1 {
-          margin: 0 0 0 14px;
-          font-size: 2.4rem;
-          font-weight: bold;
-          text-transform: uppercase;
-          letter-spacing: 2px;
-          color: var(--header-text);
+        .title-wrap {
+          display: inline-block;
+          margin-left: 6px;
+          line-height: 0;
           cursor: pointer;
-          transition: transform 0.4s ease, color 0.4s ease;
-          animation: neonAnimation 1.5s ease-in-out infinite alternate;
+          transition: transform 0.4s ease, filter 0.4s ease;
         }
 
-        .main-header h1:hover {
-          transform: scale(1.1) rotate(-5deg) translateX(8px);
-          color: rgb(128, 129, 212);
+        .title-wrap img {
+          height: 90px;
+          width: auto;
+          display: block;
+          transform: scaleX(1.32);
+          transform-origin: left center;
+          filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.35));
         }
 
-        @keyframes neonAnimation {
-          0% {
-            text-shadow: 0 0 5px #fff, 0 0 10px #000, 0 0 15px #000, 0 0 20px #000;
-          }
-          100% {
-            text-shadow: 0 0 10px #000, 0 0 20px #000, 0 0 30px #000, 0 0 40px #000;
-          }
+        .title-wrap:hover {
+          transform: scale(1.08) rotate(-5deg) translateX(6px);
+          filter: brightness(1.05);
+        }
+
+        .title-wrap:hover img {
+          transform: scaleX(1.32);
         }
 
         .nav-line {
@@ -62,7 +62,7 @@ export default function Header() {
           background: var(--header);
           padding: 10px 0;
           gap: 6px;
-          box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+          box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
         }
 
         .main-nav a {
@@ -79,14 +79,34 @@ export default function Header() {
           background: #ffffff;
           color: #333;
         }
+
+        @media (max-width: 500px) {
+          .main-header {
+            padding: 6px 12px;
+          }
+
+          .main-header .logo-icon {
+            max-height: 64px;
+          }
+
+          .title-wrap img {
+            height: 72px;
+            transform: scaleX(1.1);
+          }
+
+          .title-wrap:hover img {
+            transform: scaleX(1.1);
+          }
+        }
       `}</style>
 
       <header className="main-header">
         <Link to="/home">
-          <img src="/loguito.png" alt="Logo Popu Club" />
+          <img className="logo-icon" src="/loguito.png" alt="Logo Popu Club" />
         </Link>
-        <Link to="/home" style={{ textDecoration: 'none' }}>
-          <h1>Popu-club</h1>
+
+        <Link to="/home" className="title-wrap" aria-label="Popu-Club">
+          <img src="/logo-title.png" alt="POPU-CLUB" />
         </Link>
       </header>
 

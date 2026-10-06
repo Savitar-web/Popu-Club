@@ -6,63 +6,102 @@ export default function Footer() {
           background: var(--header);
           color: white;
           text-align: center;
-          padding: 28px 20px 32px;
-          margin-top: 50px;
+          padding: 36px 20px 40px;
+          margin-top: 48px;
         }
 
         .main-footer p {
-          margin: 0 0 1px 0;
-          font-size: 1.05rem;
-          letter-spacing: 0.5px;
+          margin: 0 0 22px 0;
+          font-size: 1.15rem;
+          letter-spacing: 0.4px;
+          line-height: 1.4;
+          opacity: 0.95;
         }
 
         .social-icons {
           display: flex;
           justify-content: center;
           align-items: center;
-          gap: 28px;
+          gap: 36px;
           flex-wrap: wrap;
         }
 
         .social-icons a {
           display: inline-block;
-          transition: transform 0.3s ease;
+          transition: transform 0.28s ease, filter 0.28s ease;
+          line-height: 0;
         }
 
         .social-icons a:hover {
-          transform: scale(1.15) translateY(-4px);
+          transform: scale(1.08) translateY(-3px);
+          filter: brightness(1.05);
         }
 
         .social-icons img {
-          width: 90px;
+          width: 150px;
           height: auto;
-          filter: drop-shadow(0 2px 6px rgba(0,0,0,0.35));
+          max-width: 42vw;
+          filter: drop-shadow(0 3px 8px rgba(0, 0, 0, 0.35));
         }
 
-        @media (max-width: 500px) {
-          .social-icons {
-            gap: 16px;
+        @media (max-width: 600px) {
+          .main-footer {
+            padding: 28px 16px 32px;
+            margin-top: 36px;
           }
-          .social-icons img {
-            width: 72px;
-          }
+
           .main-footer p {
-            font-size: 0.95rem;
+            font-size: 1.05rem;
+            margin-bottom: 18px;
+          }
+
+          .social-icons {
+            gap: 20px;
+          }
+
+          .social-icons img {
+            width: 125px;
+            max-width: 40vw;
+          }
+        }
+
+        @media (min-width: 900px) {
+          .social-icons img {
+            width: 170px;
+          }
+
+          .main-footer p {
+            font-size: 1.2rem;
           }
         }
       `}</style>
 
       <footer className="main-footer">
-        <p>© Popu-Club 2024 por Cherry Bless</p>
+        <p>© Popu-Club 2026 por Cherry Bless</p>
+
         <div className="social-icons">
-          <a href="https://www.instagram.com/thecherrybless/" target="_blank" rel="noreferrer">
-            <img src="/iconitos/nubes, insta, kofi, discord/insta.png" alt="Instagram" />
+          <a
+            href="https://www.instagram.com/thecherrybless/"
+            target="_blank"
+            rel="noreferrer"
+            aria-label="Instagram de Cherry Bless"
+          >
+            <img
+              src="/iconitos/nubes, insta, kofi, discord/insta.webp"
+              alt="Síguenos en Instagram"
+            />
           </a>
-          <a href="https://discord.com/invite/4auZNxgeFF" target="_blank" rel="noreferrer">
-            <img src="/iconitos/nubes, insta, kofi, discord/discord.png" alt="Discord" />
-          </a>
-          <a href="https://ko-fi.com/cherrybless" target="_blank" rel="noreferrer">
-            <img src="/iconitos/nubes, insta, kofi, discord/kofi.png" alt="Ko-fi" />
+
+          <a
+            href="https://ko-fi.com/cherrybless"
+            target="_blank"
+            rel="noreferrer"
+            aria-label="Apóyanos en Ko-fi"
+          >
+            <img
+              src="/iconitos/nubes, insta, kofi, discord/kofi.webp"
+              alt="Apóyanos en Ko-fi"
+            />
           </a>
         </div>
       </footer>

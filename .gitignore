@@ -12,7 +12,7 @@ dist
 dist-ssr
 *.local
 
-# Editor directories and files
+# Editor
 .vscode/*
 !.vscode/extensions.json
 .idea
@@ -24,9 +24,20 @@ dist-ssr
 *.sw?
 
 .vercel
-.env*
-node_modules
-dist
 .env
 .env.local
-.DS_Store
+.env*
+
+# Electron (no subir a Vercel)
+/electron-dist/
+/dist-electron/
+/release/
+*.exe
+*.dmg
+*.AppImage
+
+# Capacitor / Android
+/android/.gradle/
+/android/app/build/
+/android/build/
+/ios/App/Pods/

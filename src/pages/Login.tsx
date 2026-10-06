@@ -4,7 +4,6 @@ import Cropper from 'react-easy-crop'
 import type { Area } from 'react-easy-crop'
 import { supabase, isSupabaseConfigured } from '../lib/supabase'
 
-/** login | register | recover-choose | recover-user | recover-email | recover-password | recover-new-pass */
 type Screen =
   | 'register'
   | 'login'
@@ -20,9 +19,9 @@ export default function Login() {
   const [error, setError] = useState('')
   const [info, setInfo] = useState('')
   const [loading, setLoading] = useState(false)
+  const [guestBubble, setGuestBubble] = useState(false)
   const navigate = useNavigate()
 
-  // Cropper
   const [showCropper, setShowCropper] = useState(false)
   const [imageSrc, setImageSrc] = useState<string | null>(null)
   const [crop, setCrop] = useState({ x: 0, y: 0 })
@@ -34,7 +33,6 @@ export default function Login() {
   const [resizeHeight, setResizeHeight] = useState(0)
   const [livePreview, setLivePreview] = useState<string | null>(null)
 
-  // Recovery fields
   const [recoverEmail, setRecoverEmail] = useState('')
   const [recoverUsername, setRecoverUsername] = useState('')
   const [recoverResult, setRecoverResult] = useState('')
@@ -107,7 +105,6 @@ export default function Login() {
     generatePreview()
   }, [imageSrc, croppedAreaPixels, resizeWidth, resizeHeight, zoom])
 
-  // Enlace de recovery de Supabase
   useEffect(() => {
     const hash = window.location.hash
     if (hash.includes('type=recovery') || hash.includes('type=password_recovery')) {
@@ -115,7 +112,9 @@ export default function Login() {
       setInfo('Enlace verificado. Escribe tu nueva contraseña.')
       ;(async () => {
         if (!supabase) return
-        const { data: { user } } = await supabase.auth.getUser()
+        const {
+          data: { user },
+        } = await supabase.auth.getUser()
         if (user) {
           const { data: p } = await supabase
             .from('profiles')
@@ -131,6 +130,10 @@ export default function Login() {
       })()
     }
   }, [])
+
+  useEffect(() => {
+    if (screen !== 'register') setGuestBubble(false)
+  }, [screen])
 
   const handleApply = () => {
     if (livePreview) setPreview(livePreview)
@@ -184,6 +187,10 @@ export default function Login() {
     }
   }
 
+  const clearGuestMode = () => {
+    localStorage.removeItem('guestMode')
+  }
+
   const persistSession = (profile: {
     id?: string
     username?: string | null
@@ -195,6 +202,7 @@ export default function Login() {
     banner?: string | null
     show_age?: boolean | null
   }) => {
+    clearGuestMode()
     const username = profile.username || ''
     const email = profile.email || ''
     const age = profile.age != null ? String(profile.age) : ''
@@ -218,6 +226,19 @@ export default function Login() {
     localStorage.setItem('profilePic', profilePic)
     localStorage.setItem('role', role)
     window.dispatchEvent(new Event('profileUpdated'))
+  }
+
+  const enterAsGuest = () => {
+    localStorage.setItem('guestMode', 'true')
+    localStorage.removeItem('currentUser')
+    localStorage.removeItem('username')
+    localStorage.removeItem('email')
+    localStorage.removeItem('age')
+    localStorage.removeItem('profilePic')
+    localStorage.removeItem('role')
+    window.dispatchEvent(new Event('profileUpdated'))
+    setGuestBubble(false)
+    navigate('/home')
   }
 
   const go = (s: Screen) => {
@@ -514,7 +535,9 @@ export default function Login() {
       go('login')
       return
     }
-    const { data: { user } } = await supabase.auth.getUser()
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
     if (user) {
       const { data: profile } = await supabase.from('profiles').select('*').eq('id', user.id).single()
       if (profile) persistSession(profile)
@@ -660,6 +683,80 @@ export default function Login() {
         .toggle-button:disabled {
           opacity: 0.65; cursor: not-allowed; transform: none;
         }
+        .guest-button {
+          width: 100%;
+          padding: 12px;
+          margin-top: 4px;
+          margin-bottom: 6px;
+          border: 3px solid #494949;
+          border-radius: 8px;
+          background: transparent;
+          color: #222;
+          font-size: 14px;
+          font-family: 'Laffayette Comic Pro', cursive, Arial, sans-serif;
+          cursor: pointer;
+          transition: all 0.25s;
+        }
+        .guest-button:hover {
+          border-color: #FFFF00;
+          background: rgba(255, 255, 0, 0.12);
+          transform: scale(1.02);
+        }
+        .guest-hint {
+          text-align: center;
+          color: #555;
+          font-size: 12px;
+          margin: 0 0 8px 0;
+          line-height: 1.35;
+        }
+        .guest-float {
+          position: fixed;
+          top: 18px;
+          left: 18px;
+          z-index: 50;
+        }
+        .guest-float-btn {
+          width: 52px;
+          height: 52px;
+          border-radius: 50%;
+          border: 3px solid #FFFF00;
+          background: rgba(255,255,255,0.95);
+          color: #222;
+          font-size: 22px;
+          cursor: pointer;
+          box-shadow: 0 4px 16px rgba(0,0,0,0.35);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          transition: transform 0.2s;
+        }
+        .guest-float-btn:hover { transform: scale(1.08); }
+        .guest-bubble {
+          position: absolute;
+          top: 60px;
+          left: 0;
+          width: 260px;
+          background: rgba(255,255,255,0.97);
+          border: 4px solid #FFFF00;
+          border-radius: 14px;
+          padding: 16px;
+          color: #222;
+          box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+          animation: slideIn 0.25s ease;
+        }
+        .guest-bubble h3 {
+          margin: 0 0 8px;
+          font-size: 1.05rem;
+          color: rgb(128, 129, 212);
+          text-align: center;
+        }
+        .guest-bubble p {
+          margin: 0 0 12px;
+          font-size: 13px;
+          line-height: 1.4;
+          color: #333;
+          text-align: center;
+        }
         .error-message {
           background: #ff4d4d; color: white; padding: 10px 12px;
           border-radius: 8px; margin-bottom: 12px; font-size: 13px; text-align: center;
@@ -750,11 +847,42 @@ export default function Login() {
           .registration-container, .login-container { padding: 20px 14px; }
           h1 { font-size: 1.35rem; }
           .cropper-area { height: 180px; }
+          .guest-bubble { width: 230px; }
         }
       `}</style>
 
+      {screen === 'register' && (
+        <div className="guest-float">
+          <button
+            type="button"
+            className="guest-float-btn"
+            onClick={() => setGuestBubble((v) => !v)}
+            aria-label="Modo visita"
+            title="Entrar como visita"
+          >
+            👁
+          </button>
+          {guestBubble && (
+            <div className="guest-bubble">
+              <h3>Modo visita</h3>
+              <p>
+                Puedes leer arcos y capítulos sin cuenta. Likes, comentarios y perfil requieren
+                registro.
+              </p>
+              <button
+                type="button"
+                className="guest-button"
+                onClick={enterAsGuest}
+                style={{ marginBottom: 0 }}
+              >
+                Entrar como visita
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="auth-wrapper">
-        {/* REGISTRO */}
         {screen === 'register' && (
           <div className="registration-container" key="register">
             <h1>Popu-Club</h1>
@@ -772,7 +900,9 @@ export default function Login() {
                 <select id="age" name="age" required disabled={loading}>
                   <option value="">Selecciona...</option>
                   {Array.from({ length: 35 }, (_, i) => i + 11).map((n) => (
-                    <option key={n} value={n}>{n}</option>
+                    <option key={n} value={n}>
+                      {n}
+                    </option>
                   ))}
                 </select>
               </div>
@@ -790,7 +920,13 @@ export default function Login() {
               </div>
               <div className="input-group">
                 <label htmlFor="confirm_password">Confirmar contraseña:</label>
-                <input type="password" id="confirm_password" name="confirm_password" required disabled={loading} />
+                <input
+                  type="password"
+                  id="confirm_password"
+                  name="confirm_password"
+                  required
+                  disabled={loading}
+                />
               </div>
               <button type="submit" disabled={loading}>
                 {loading ? 'Creando cuenta…' : 'Registrar'}
@@ -802,7 +938,6 @@ export default function Login() {
           </div>
         )}
 
-        {/* LOGIN */}
         {screen === 'login' && (
           <div className="login-container" key="login">
             <h1>Iniciar Sesión</h1>
@@ -832,14 +967,16 @@ export default function Login() {
                 ¡No tengo cuenta!
               </button>
             </form>
-            {/* Separado para no chocar con los botones principales */}
+            <p className="guest-hint">Puedes leer arcos y capítulos sin registrarte.</p>
+            <button type="button" className="guest-button" disabled={loading} onClick={enterAsGuest}>
+              👁 Entrar como visita
+            </button>
             <button type="button" className="recover-link" onClick={() => go('recover-choose')}>
               ¿Olvidaste usuario, correo o contraseña?
             </button>
           </div>
         )}
 
-        {/* RECUPERAR — elegir */}
         {screen === 'recover-choose' && (
           <div className="login-container" key="recover-choose">
             <h1>¿Qué quieres recordar?</h1>
@@ -859,7 +996,6 @@ export default function Login() {
           </div>
         )}
 
-        {/* Recordar usuario */}
         {screen === 'recover-user' && (
           <div className="login-container" key="recover-user">
             <h1>Recordar usuario</h1>
@@ -876,14 +1012,19 @@ export default function Login() {
                   disabled={loading}
                 />
               </div>
-              <button type="submit" disabled={loading}>{loading ? 'Buscando…' : 'Buscar usuario'}</button>
+              <button type="submit" disabled={loading}>
+                {loading ? 'Buscando…' : 'Buscar usuario'}
+              </button>
             </form>
-            <button type="button" className="toggle-button" onClick={() => go('recover-choose')}>Otras opciones</button>
-            <button type="button" className="recover-link" onClick={() => go('login')}>Volver a iniciar sesión</button>
+            <button type="button" className="toggle-button" onClick={() => go('recover-choose')}>
+              Otras opciones
+            </button>
+            <button type="button" className="recover-link" onClick={() => go('login')}>
+              Volver a iniciar sesión
+            </button>
           </div>
         )}
 
-        {/* Recordar correo */}
         {screen === 'recover-email' && (
           <div className="login-container" key="recover-email">
             <h1>Recordar correo</h1>
@@ -900,14 +1041,19 @@ export default function Login() {
                   disabled={loading}
                 />
               </div>
-              <button type="submit" disabled={loading}>{loading ? 'Buscando…' : 'Buscar correo'}</button>
+              <button type="submit" disabled={loading}>
+                {loading ? 'Buscando…' : 'Buscar correo'}
+              </button>
             </form>
-            <button type="button" className="toggle-button" onClick={() => go('recover-choose')}>Otras opciones</button>
-            <button type="button" className="recover-link" onClick={() => go('login')}>Volver a iniciar sesión</button>
+            <button type="button" className="toggle-button" onClick={() => go('recover-choose')}>
+              Otras opciones
+            </button>
+            <button type="button" className="recover-link" onClick={() => go('login')}>
+              Volver a iniciar sesión
+            </button>
           </div>
         )}
 
-        {/* Reset password email */}
         {screen === 'recover-password' && (
           <div className="login-container" key="recover-password">
             <h1>Nueva contraseña</h1>
@@ -924,14 +1070,19 @@ export default function Login() {
                   disabled={loading}
                 />
               </div>
-              <button type="submit" disabled={loading}>{loading ? 'Enviando…' : 'Enviar enlace'}</button>
+              <button type="submit" disabled={loading}>
+                {loading ? 'Enviando…' : 'Enviar enlace'}
+              </button>
             </form>
-            <button type="button" className="toggle-button" onClick={() => go('recover-choose')}>Otras opciones</button>
-            <button type="button" className="recover-link" onClick={() => go('login')}>Volver a iniciar sesión</button>
+            <button type="button" className="toggle-button" onClick={() => go('recover-choose')}>
+              Otras opciones
+            </button>
+            <button type="button" className="recover-link" onClick={() => go('login')}>
+              Volver a iniciar sesión
+            </button>
           </div>
         )}
 
-        {/* Nueva contraseña tras el enlace */}
         {screen === 'recover-new-pass' && (
           <div className="login-container" key="recover-new-pass">
             <h1>Elige nueva contraseña</h1>
@@ -948,19 +1099,39 @@ export default function Login() {
               <form onSubmit={updatePassword}>
                 <div className="input-group">
                   <label>Nueva contraseña</label>
-                  <input type="password" value={newPass} onChange={(e) => setNewPass(e.target.value)} required disabled={loading} />
+                  <input
+                    type="password"
+                    value={newPass}
+                    onChange={(e) => setNewPass(e.target.value)}
+                    required
+                    disabled={loading}
+                  />
                 </div>
                 <div className="input-group">
                   <label>Confirmar contraseña</label>
-                  <input type="password" value={newPass2} onChange={(e) => setNewPass2(e.target.value)} required disabled={loading} />
+                  <input
+                    type="password"
+                    value={newPass2}
+                    onChange={(e) => setNewPass2(e.target.value)}
+                    required
+                    disabled={loading}
+                  />
                 </div>
-                <button type="submit" disabled={loading}>{loading ? 'Guardando…' : 'Continuar'}</button>
+                <button type="submit" disabled={loading}>
+                  {loading ? 'Guardando…' : 'Continuar'}
+                </button>
               </form>
             ) : (
               <>
-                <p style={{ color: '#333', textAlign: 'center', fontSize: 14 }}>¿Quieres iniciar sesión ahora?</p>
-                <button type="button" onClick={goHomeAfterReset}>Sí, ir al inicio</button>
-                <button type="button" className="toggle-button" onClick={() => go('login')}>Más tarde</button>
+                <p style={{ color: '#333', textAlign: 'center', fontSize: 14 }}>
+                  ¿Quieres iniciar sesión ahora?
+                </p>
+                <button type="button" onClick={goHomeAfterReset}>
+                  Sí, ir al inicio
+                </button>
+                <button type="button" className="toggle-button" onClick={() => go('login')}>
+                  Más tarde
+                </button>
               </>
             )}
           </div>
@@ -987,21 +1158,42 @@ export default function Login() {
             <div className="cropper-controls">
               <div>
                 <label>Zoom (acercar / alejar)</label>
-                <input type="range" min={1} max={3} step={0.05} value={zoom} onChange={(e) => setZoom(Number(e.target.value))} />
+                <input
+                  type="range"
+                  min={1}
+                  max={3}
+                  step={0.05}
+                  value={zoom}
+                  onChange={(e) => setZoom(Number(e.target.value))}
+                />
               </div>
               <div>
                 <label>Redimensionar (píxeles)</label>
                 <div className="pixel-inputs">
                   <div>
                     <label style={{ fontSize: 11 }}>Ancho</label>
-                    <input type="number" min={50} max={2000} value={resizeWidth} onChange={(e) => setResizeWidth(Number(e.target.value) || 0)} />
+                    <input
+                      type="number"
+                      min={50}
+                      max={2000}
+                      value={resizeWidth}
+                      onChange={(e) => setResizeWidth(Number(e.target.value) || 0)}
+                    />
                   </div>
                   <div>
                     <label style={{ fontSize: 11 }}>Alto</label>
-                    <input type="number" min={50} max={2000} value={resizeHeight} onChange={(e) => setResizeHeight(Number(e.target.value) || 0)} />
+                    <input
+                      type="number"
+                      min={50}
+                      max={2000}
+                      value={resizeHeight}
+                      onChange={(e) => setResizeHeight(Number(e.target.value) || 0)}
+                    />
                   </div>
                 </div>
-                <small style={{ color: '#555', fontSize: 11 }}>Original: {originalWidth} × {originalHeight} px</small>
+                <small style={{ color: '#555', fontSize: 11 }}>
+                  Original: {originalWidth} × {originalHeight} px
+                </small>
               </div>
             </div>
             {livePreview && (
@@ -1013,9 +1205,15 @@ export default function Login() {
               </div>
             )}
             <div className="cropper-actions">
-              <button className="btn-cancel" onClick={() => setShowCropper(false)}>Cancelar</button>
-              <button className="btn-auto" onClick={handleAutoAdjust}>Auto ajustar</button>
-              <button className="btn-apply" onClick={handleApply}>Aplicar</button>
+              <button className="btn-cancel" onClick={() => setShowCropper(false)}>
+                Cancelar
+              </button>
+              <button className="btn-auto" onClick={handleAutoAdjust}>
+                Auto ajustar
+              </button>
+              <button className="btn-apply" onClick={handleApply}>
+                Aplicar
+              </button>
             </div>
           </div>
         </div>

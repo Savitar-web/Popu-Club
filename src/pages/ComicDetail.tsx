@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useParams, useNavigate } from 'react-router-dom'
 import Header from '../components/Header'
 import Footer from '../components/Footer'
 import ProfileButton from '../components/ProfileButton'
@@ -38,8 +38,13 @@ function statusEs(s?: string | null) {
   return s || '—'
 }
 
+function isGuestUser() {
+  return localStorage.getItem('guestMode') === 'true' || !localStorage.getItem('currentUser')
+}
+
 export default function ComicDetail() {
   const { comicId } = useParams()
+  const navigate = useNavigate()
   const [comic, setComic] = useState<Comic | null>(null)
   const [chapters, setChapters] = useState<Chapter[]>([])
   const [loading, setLoading] = useState(true)
@@ -47,6 +52,7 @@ export default function ComicDetail() {
   const [lightbox, setLightbox] = useState<string | null>(null)
   const [likedMap, setLikedMap] = useState<Record<string, boolean>>({})
   const [totals, setTotals] = useState({ views: 0, likes: 0, comments: 0 })
+  const [registerModal, setRegisterModal] = useState(false)
 
   useEffect(() => {
     if (comicId) loadData(comicId)
@@ -61,7 +67,9 @@ export default function ComicDetail() {
       return
     }
     try {
-      const { data: { user } } = await supabase.auth.getUser()
+      const {
+        data: { user },
+      } = await supabase.auth.getUser()
 
       const { data: comicData, error: cErr } = await supabase
         .from('comics')
@@ -84,7 +92,9 @@ export default function ComicDetail() {
 
       const list = (chs as Chapter[]) || []
       const enriched: Chapter[] = []
-      let tv = 0, tl = 0, tc = 0
+      let tv = 0,
+        tl = 0,
+        tc = 0
       const liked: Record<string, boolean> = {}
 
       for (const ch of list) {
@@ -123,11 +133,23 @@ export default function ComicDetail() {
     }
   }
 
+  const goRegister = () => {
+    localStorage.removeItem('guestMode')
+    setRegisterModal(false)
+    navigate('/login')
+  }
+
   const toggleLike = async (ch: Chapter) => {
     if (!supabase) return
-    const { data: { user } } = await supabase.auth.getUser()
+    if (isGuestUser()) {
+      setRegisterModal(true)
+      return
+    }
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
     if (!user) {
-      setError('Inicia sesión para dar like')
+      setRegisterModal(true)
       return
     }
     const isLiked = likedMap[ch.id]
@@ -135,18 +157,22 @@ export default function ComicDetail() {
       await supabase.from('likes').delete().eq('chapter_id', ch.id).eq('user_id', user.id)
       setLikedMap((m) => ({ ...m, [ch.id]: false }))
       setChapters((prev) =>
-        prev.map((c) => c.id === ch.id ? { ...c, likes_count: Math.max(0, (c.likes_count || 1) - 1) } : c)
+        prev.map((c) =>
+          c.id === ch.id ? { ...c, likes_count: Math.max(0, (c.likes_count || 1) - 1) } : c
+        )
       )
       setTotals((t) => ({ ...t, likes: Math.max(0, t.likes - 1) }))
     } else {
-      const { error: insErr } = await supabase.from('likes').insert({ chapter_id: ch.id, user_id: user.id })
+      const { error: insErr } = await supabase
+        .from('likes')
+        .insert({ chapter_id: ch.id, user_id: user.id })
       if (insErr && insErr.code !== '23505') {
         setError(insErr.message)
         return
       }
       setLikedMap((m) => ({ ...m, [ch.id]: true }))
       setChapters((prev) =>
-        prev.map((c) => c.id === ch.id ? { ...c, likes_count: (c.likes_count || 0) + 1 } : c)
+        prev.map((c) => (c.id === ch.id ? { ...c, likes_count: (c.likes_count || 0) + 1 } : c))
       )
       setTotals((t) => ({ ...t, likes: t.likes + 1 }))
     }
@@ -157,7 +183,8 @@ export default function ComicDetail() {
   if (loading) {
     return (
       <>
-        <Header /><ProfileButton />
+        <Header />
+        <ProfileButton />
         <div style={{ textAlign: 'center', padding: 48, color: 'var(--muted)' }}>Cargando…</div>
         <Footer />
       </>
@@ -167,8 +194,17 @@ export default function ComicDetail() {
   if (error && !comic) {
     return (
       <>
-        <Header /><ProfileButton />
-        <div style={{ maxWidth: 560, margin: '40px auto', padding: 24, background: 'var(--card)', borderRadius: 14 }}>
+        <Header />
+        <ProfileButton />
+        <div
+          style={{
+            maxWidth: 560,
+            margin: '40px auto',
+            padding: 24,
+            background: 'var(--card)',
+            borderRadius: 14,
+          }}
+        >
           <h1>Arco</h1>
           <p style={{ color: 'crimson' }}>{error}</p>
           <Link to="/arcos">Volver a Arcos</Link>
@@ -183,62 +219,239 @@ export default function ComicDetail() {
   return (
     <>
       <style>{`
-        .comic-page { max-width: 900px; margin: 0 auto; padding: 24px 16px 48px; font-family: 'Laffayette Comic Pro', cursive, Arial, sans-serif; }
+        .comic-page {
+          max-width: 900px;
+          margin: 0 auto;
+          padding: 24px 16px 48px;
+          font-family: 'Laffayette Comic Pro', cursive, Arial, sans-serif;
+        }
         .comic-banner {
-          width: 100%; height: 200px; border-radius: 14px;
-          background: linear-gradient(135deg, #333, #555); background-size: cover; background-position: center;
-          margin-bottom: 24px; box-shadow: 0 8px 20px rgba(0,0,0,0.2); cursor: zoom-in;
+          width: 100%;
+          height: 200px;
+          border-radius: 14px;
+          background: linear-gradient(135deg, #333, #555);
+          background-size: cover;
+          background-position: center;
+          margin-bottom: 24px;
+          box-shadow: 0 8px 20px rgba(0,0,0,0.2);
+          cursor: zoom-in;
         }
-        .comic-hero { display: grid; grid-template-columns: 180px 1fr; gap: 24px; margin-bottom: 24px; align-items: start; }
+        .comic-hero {
+          display: grid;
+          grid-template-columns: 180px 1fr;
+          gap: 24px;
+          margin-bottom: 24px;
+          align-items: start;
+        }
         .comic-cover {
-          width: 100%; border-radius: 12px; box-shadow: 0 8px 20px rgba(0,0,0,0.2);
-          background: #222; object-fit: cover; aspect-ratio: 3/4; cursor: zoom-in;
+          width: 100%;
+          border-radius: 12px;
+          box-shadow: 0 8px 20px rgba(0,0,0,0.2);
+          background: #222;
+          object-fit: cover;
+          aspect-ratio: 3/4;
+          cursor: zoom-in;
         }
-        .comic-meta h1 { margin: 0 0 8px; font-size: 1.9rem; color: var(--text); }
-        .comic-badges { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
-        .badge { padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: bold; }
-        .badge-status { border: 2px solid #3b82f6; background: rgba(59,130,246,0.12); color: var(--text); }
-        .badge-genre { border: 2px solid #ef4444; background: rgba(239,68,68,0.1); color: var(--text); }
-        .badge-stat { border: 2px solid #FFD700; background: rgba(255,215,0,0.12); color: var(--text); }
-        .comic-desc { color: var(--muted); line-height: 1.5; margin: 0; }
+        .comic-meta h1 {
+          margin: 0 0 8px;
+          font-size: 1.9rem;
+          color: var(--text);
+        }
+        .comic-badges {
+          display: flex;
+          gap: 8px;
+          flex-wrap: wrap;
+          margin-bottom: 12px;
+        }
+        .badge {
+          padding: 4px 10px;
+          border-radius: 999px;
+          font-size: 12px;
+          font-weight: bold;
+        }
+        .badge-status {
+          border: 2px solid #3b82f6;
+          background: rgba(59,130,246,0.12);
+          color: var(--text);
+        }
+        .badge-genre {
+          border: 2px solid #ef4444;
+          background: rgba(239,68,68,0.1);
+          color: var(--text);
+        }
+        .badge-stat {
+          border: 2px solid #FFD700;
+          background: rgba(255,215,0,0.12);
+          color: var(--text);
+        }
+        .comic-desc {
+          color: var(--muted);
+          line-height: 1.5;
+          margin: 0;
+        }
         .stats-bar {
-          display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 24px;
-          padding: 14px 16px; background: var(--card); border-radius: 12px;
+          display: flex;
+          gap: 16px;
+          flex-wrap: wrap;
+          margin-bottom: 24px;
+          padding: 14px 16px;
+          background: var(--card);
+          border-radius: 12px;
         }
-        .stats-bar span { font-weight: bold; color: var(--text); font-size: 14px; }
-        .stats-bar .pink { color: #ff4d6d; }
+        .stats-bar span {
+          font-weight: bold;
+          color: var(--text);
+          font-size: 14px;
+        }
+        .stats-bar .pink { color: #ff2d55; }
         .chapter-row {
-          display: flex; align-items: center; justify-content: space-between; gap: 12px;
-          padding: 14px 10px; border-top: 1px solid rgba(128,128,128,0.2); flex-wrap: wrap;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+          padding: 14px 10px;
+          border-top: 1px solid rgba(128,128,128,0.2);
+          flex-wrap: wrap;
         }
-        .chapter-info { display: flex; gap: 12px; align-items: center; flex: 1; min-width: 180px; }
+        .chapter-info {
+          display: flex;
+          gap: 14px;
+          align-items: center;
+          flex: 1;
+          min-width: 180px;
+        }
+        /* Iconos estilo Webtoon ~80px, sin borde amarillo */
         .ch-icon {
-          width: 44px; height: 44px; border-radius: 10px; object-fit: cover;
-          border: 2px solid #FFD700; background: #222; flex-shrink: 0;
+          width: 80px;
+          height: 80px;
+          border-radius: 8px;
+          object-fit: cover;
+          border: none;
+          background: #222;
+          flex-shrink: 0;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          color: #FFD700;
+          font-weight: bold;
+          font-size: 14px;
         }
-        .chapter-info a { color: var(--text); font-weight: bold; text-decoration: none; }
-        .chapter-date { font-size: 12px; color: var(--muted); margin-top: 2px; }
-        .chapter-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+        .chapter-info a {
+          color: var(--text);
+          font-weight: bold;
+          text-decoration: none;
+        }
+        .chapter-date {
+          font-size: 12px;
+          color: var(--muted);
+          margin-top: 2px;
+        }
+        .chapter-actions {
+          display: flex;
+          gap: 8px;
+          align-items: center;
+          flex-wrap: wrap;
+        }
         .action-btn {
-          display: inline-flex; align-items: center; gap: 5px;
-          padding: 8px 12px; border-radius: 8px; border: none;
-          background: linear-gradient(135deg, #FFFF00, #FFD700); color: #111;
-          font-family: inherit; font-weight: bold; font-size: 13px; cursor: pointer; text-decoration: none;
+          display: inline-flex;
+          align-items: center;
+          gap: 5px;
+          padding: 8px 12px;
+          border-radius: 8px;
+          border: 2px solid #ccc;
+          background: #fff;
+          color: #333;
+          font-family: inherit;
+          font-weight: bold;
+          font-size: 13px;
+          cursor: pointer;
+          text-decoration: none;
+          min-height: 36px;
         }
-        .action-btn.ghost { background: var(--card); color: var(--text); border: 2px solid var(--border, #494949); }
-        .heart-pink { color: #ff4d6d; }
-        .empty-chapters { text-align: center; padding: 32px; color: var(--muted); background: var(--card); border-radius: 12px; }
-        .err { background: #f8d7da; color: #721c24; padding: 10px; border-radius: 8px; margin-bottom: 12px; }
+        .action-btn.liked {
+          border-color: #ff2d55;
+          color: #ff2d55;
+        }
+        .action-btn .heart-ico {
+          font-size: 1.2em;
+          font-weight: 900;
+          line-height: 1;
+          color: #888;
+        }
+        .action-btn.liked .heart-ico {
+          color: #ff2d55;
+        }
+        .action-btn.leer {
+          background: linear-gradient(135deg, #FFFF00, #FFD700);
+          color: #111;
+          border: none;
+        }
+        .empty-chapters {
+          text-align: center;
+          padding: 32px;
+          color: var(--muted);
+          background: var(--card);
+          border-radius: 12px;
+        }
+        .err {
+          background: #f8d7da;
+          color: #721c24;
+          padding: 10px;
+          border-radius: 8px;
+          margin-bottom: 12px;
+        }
+        .modal-overlay {
+          position: fixed;
+          inset: 0;
+          z-index: 2500;
+          background: rgba(0,0,0,0.65);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 16px;
+        }
+        .modal-box {
+          background: var(--card, #fff);
+          color: var(--text, #222);
+          border: 3px solid #FFD700;
+          border-radius: 16px;
+          padding: 24px;
+          max-width: 400px;
+          width: 100%;
+          font-family: 'Laffayette Comic Pro', cursive, Arial, sans-serif;
+        }
+        .modal-box h3 { margin: 0 0 10px; }
+        .modal-actions { display: flex; gap: 10px; margin-top: 18px; }
+        .modal-actions button {
+          flex: 1;
+          padding: 11px;
+          border: none;
+          border-radius: 10px;
+          font-family: inherit;
+          font-weight: bold;
+          cursor: pointer;
+        }
+        .modal-ok {
+          background: linear-gradient(135deg, #FFFF00, #FFD700);
+          color: #111;
+        }
+        .modal-cancel {
+          background: #666;
+          color: #fff;
+        }
         @media (max-width: 600px) {
-          .comic-hero { grid-template-columns: 1fr; justify-items: center; text-align: center; }
+          .comic-hero {
+            grid-template-columns: 1fr;
+            justify-items: center;
+            text-align: center;
+          }
           .comic-cover { max-width: 220px; }
           .comic-badges { justify-content: center; }
+          .ch-icon {
+            width: 68px;
+            height: 68px;
+          }
         }
-        .heart-pink, .heart.pink, span.heart-pink, .like-btn.on .heart,
-        .nav-btn.like-btn.on .heart, .action-btn .heart-pink {
-          color: #ff2d55 !important;
-        }
-        .c-like.on { color: #ff2d55 !important; }
       `}</style>
 
       <Header />
@@ -282,7 +495,9 @@ export default function ComicDetail() {
         <h2 style={{ marginBottom: 16, color: 'var(--text)' }}>Capítulos</h2>
 
         {sorted.length === 0 ? (
-          <div className="empty-chapters"><p>Aún no hay capítulos publicados en este arco.</p></div>
+          <div className="empty-chapters">
+            <p>Aún no hay capítulos publicados en este arco.</p>
+          </div>
         ) : (
           <div>
             {sorted.map((ch) => (
@@ -291,9 +506,7 @@ export default function ComicDetail() {
                   {ch.icon_url ? (
                     <img src={ch.icon_url} alt="" className="ch-icon" />
                   ) : (
-                    <span className="ch-icon" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: '#FFD700', fontWeight: 'bold', fontSize: 12 }}>
-                      #{ch.number}
-                    </span>
+                    <span className="ch-icon">#{ch.number}</span>
                   )}
                   <div>
                     <Link to={`/comic/${comic.id}/chapter/${ch.id}`}>
@@ -301,7 +514,11 @@ export default function ComicDetail() {
                     </Link>
                     <div className="chapter-date">
                       {ch.published_at
-                        ? new Date(ch.published_at).toLocaleDateString('es-ES', { year: 'numeric', month: 'short', day: 'numeric' })
+                        ? new Date(ch.published_at).toLocaleDateString('es-ES', {
+                            year: 'numeric',
+                            month: 'short',
+                            day: 'numeric',
+                          })
                         : '—'}
                       {' · '}👁 {ch.views_count ?? 0}
                     </div>
@@ -310,28 +527,32 @@ export default function ComicDetail() {
                 <div className="chapter-actions">
                   <button
                     type="button"
-                    className="action-btn ghost"
+                    className={`action-btn ${likedMap[ch.id] ? 'liked' : ''}`}
                     onClick={() => toggleLike(ch)}
-                    style={likedMap[ch.id] ? { borderColor: '#ff2d55' } : undefined}
+                    aria-label="Like"
                   >
-                    <span
-                      style={{
-                        color: likedMap[ch.id] ? '#ff2d55' : '#888',
-                        WebkitTextFillColor: likedMap[ch.id] ? '#ff2d55' : '#888',
-                        fontSize: '1.25em',
-                        fontWeight: 900,
-                        marginRight: 4,
-                        lineHeight: 1,
-                      }}
-                    >
-                      {likedMap[ch.id] ? '♥' : '♡'}
-                    </span>
-                    {ch.likes_count ?? 0}
+                    {likedMap[ch.id] ? (
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                        <span aria-hidden style={{ fontSize: '1.15em', lineHeight: 1 }}>❤️</span>
+                        <span>{ch.likes_count ?? 0}</span>
+                      </span>
+                    ) : (
+                      <>
+                        <span className="heart-ico">♡</span>
+                        {ch.likes_count ?? 0}
+                      </>
+                    )}
                   </button>
-                  <Link to={`/comic/${comic.id}/chapter/${ch.id}#comentarios`} className="action-btn ghost">
+                  <Link
+                    to={`/comic/${comic.id}/chapter/${ch.id}#comentarios`}
+                    className="action-btn"
+                    aria-label="Comentarios"
+                  >
                     💬 {ch.comments_count ?? 0}
                   </Link>
-                  <Link to={`/comic/${comic.id}/chapter/${ch.id}`} className="action-btn">Leer</Link>
+                  <Link to={`/comic/${comic.id}/chapter/${ch.id}`} className="action-btn leer">
+                    LEER
+                  </Link>
                 </div>
               </div>
             ))}
@@ -343,11 +564,42 @@ export default function ComicDetail() {
         <div
           onClick={() => setLightbox(null)}
           style={{
-            position: 'fixed', inset: 0, zIndex: 3000, background: 'rgba(0,0,0,0.92)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'zoom-out',
+            position: 'fixed',
+            inset: 0,
+            zIndex: 3000,
+            background: 'rgba(0,0,0,0.92)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            cursor: 'zoom-out',
           }}
         >
-          <img src={lightbox} alt="" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '95%', maxHeight: '95%', objectFit: 'contain', borderRadius: 8 }} />
+          <img
+            src={lightbox}
+            alt=""
+            onClick={(e) => e.stopPropagation()}
+            style={{ maxWidth: '95%', maxHeight: '95%', objectFit: 'contain', borderRadius: 8 }}
+          />
+        </div>
+      )}
+
+      {registerModal && (
+        <div className="modal-overlay" onClick={() => setRegisterModal(false)}>
+          <div className="modal-box" onClick={(e) => e.stopPropagation()}>
+            <h3>Para hacer esto, debes registrarte</h3>
+            <p style={{ margin: 0, color: 'var(--muted)' }}>
+              Los likes y comentarios solo están disponibles con una cuenta. Puedes seguir
+              leyendo sin registrarte.
+            </p>
+            <div className="modal-actions">
+              <button type="button" className="modal-cancel" onClick={() => setRegisterModal(false)}>
+                Seguir leyendo
+              </button>
+              <button type="button" className="modal-ok" onClick={goRegister}>
+                Registrarme
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
