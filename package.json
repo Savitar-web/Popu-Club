@@ -3,11 +3,15 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "main": "electron/main.cjs",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "lint": "oxlint",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "electron:build": "npm run build && electron-builder --win portable nsis",
+    "electron:build:linux": "npm run build && electron-builder --linux AppImage",
+    "electron:build:mac": "npm run build && electron-builder --mac dmg"
   },
   "dependencies": {
     "@capacitor/android": "^8.5.2",
@@ -24,9 +28,42 @@
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.7",
     "@vitejs/plugin-react": "^6.1.1",
+    "electron": "^44.5.1",
+    "electron-builder": "^26.15.3",
     "oxlint": "^1.81.0",
     "sharp": "^0.35.5",
     "vite": "^8.3.0",
     "vite-plugin-pwa": "^2.0.0"
+  },
+  "build": {
+    "appId": "com.cherrybless.popuclub",
+    "productName": "Popu-Club",
+    "directories": {
+      "output": "electron-dist"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*"
+    ],
+    "win": {
+      "target": [
+        "portable",
+        "nsis"
+      ]
+    },
+    "mac": {
+      "target": [
+        "dmg"
+      ]
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
   }
 }
