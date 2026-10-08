@@ -5,7 +5,6 @@ import Footer from '../components/Footer'
 import ProfileButton from '../components/ProfileButton'
 import { supabase, isSupabaseConfigured } from '../lib/supabase'
 import { notifyCommentReply } from '../lib/notifications'
-import { trackChapterView, flushPendingViews } from '../lib/offlineViews'
 
 type Page = { id: string; image_url: string; page_number: number }
 type Chapter = {
@@ -126,15 +125,6 @@ export default function ChapterReader() {
         .single()
       setChapter(ch as Chapter)
 
-
-
-useEffect(() => {
-  if (chapterId) trackChapterView(chapterId)
-}, [chapterId])
-
-useEffect(() => {
-  flushPendingViews()
-}, [])
       const { data: pgs } = await supabase
         .from('pages')
         .select('id, image_url, page_number')
