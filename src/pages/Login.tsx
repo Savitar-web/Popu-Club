@@ -586,6 +586,7 @@ export default function Login() {
           width: 100%;
           min-height: 100vh;
           min-height: 100dvh;
+          min-height: -webkit-fill-available;
           display: flex;
           justify-content: center;
           align-items: center;
@@ -606,6 +607,7 @@ export default function Login() {
           margin: 0 auto;
           max-height: min(92vh, 720px);
           overflow-y: auto;
+          flex-shrink: 0;
         }
         @keyframes slideIn {
           from { opacity: 0; transform: translateY(20px) scale(0.97); }
@@ -638,15 +640,26 @@ export default function Login() {
           padding: 8px 10px;
           border: 3px solid #494949;
           background: rgb(102, 99, 120);
-          color: #0a0a0a;
+          color: #ffffff;
           font-size: 14px;
           border-radius: 7px;
           font-family: 'Laffayette Comic Pro', cursive, Arial, sans-serif;
+          caret-color: #ffffff;
+        }
+        /* La fuente cómic no tiene el glifo de puntitos → la contraseña se ve "invisible" */
+        input[type="password"] {
+          font-family: system-ui, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
+          letter-spacing: 0.12em;
+          color: #ffffff;
+          -webkit-text-security: disc;
         }
         input:focus, select:focus {
           outline: none;
           background: rgb(82, 80, 97);
           border-color: #222;
+        }
+        input::placeholder {
+          color: rgba(255, 255, 255, 0.55);
         }
         .profile-pic-group { text-align: center; margin-bottom: 10px; }
         .profile-pic-wrapper {
@@ -854,12 +867,12 @@ export default function Login() {
         }
         @media (max-width: 480px) {
           .auth-wrapper {
-            padding: 8px;
-            align-items: flex-start;
-            padding-top: 20px;
+            padding: 10px 8px;
+            align-items: center;
+            justify-content: center;
           }
           .registration-container, .login-container {
-            max-height: none;
+            max-height: min(90dvh, 680px);
             padding: 16px 12px;
           }
           h1 { font-size: 1.3rem; }
