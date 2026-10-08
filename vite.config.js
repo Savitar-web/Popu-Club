@@ -11,6 +11,9 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: ['loguito.png', 'favicon.svg', 'pwa-192.png', 'pwa-512.png'],
       workbox: {
+        skipWaiting: true,
+        clientsClaim: true,
+        cleanupOutdatedCaches: true,
         // Evita que PNGs enormes de portadas rompan el build
         maximumFileSizeToCacheInBytes: 4 * 1024 * 1024, // 4 MiB
         globPatterns: ['**/*.{js,css,html,ico,svg,woff,woff2,webp}'],
