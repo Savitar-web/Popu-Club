@@ -158,26 +158,47 @@ export default function Admin() {
   const [tplComic, setTplComic] = useState('¡Cuando sale un arco nuevo en Popu-Club!')
   const [tplReply, setTplReply] = useState('Te respondieron un comentario')
 
+  // Aviso manual
+  const [blastTitle, setBlastTitle] = useState('')
+  const [blastBody, setBlastBody] = useState('')
+  const [blastLinkKind, setBlastLinkKind] = useState<'none' | 'home' | 'arcos' | 'comic' | 'chapter'>('none')
+  const [blastComicId, setBlastComicId] = useState('')
+  const [blastChapterId, setBlastChapterId] = useState('')
+  const [blastChapters, setBlastChapters] = useState<Chapter[]>([])
+  const [blastSending, setBlastSending] = useState(false)
+
   useEffect(() => {
+    let cancelled = false
     ;(async () => {
       if (!isSupabaseConfigured || !supabase) {
         setError('Supabase no configurado')
         setLoading(false)
         return
       }
-      if (!(await isAdmin())) {
+      // Comprobación rápida: no esperamos plantillas ni comics para desbloquear UI
+      const ok = await isAdmin()
+      if (cancelled) return
+      if (!ok) {
         setError('restricted')
         setLoading(false)
         return
       }
       setAllowed(true)
-      await loadComics()
-      const t = await getNotificationTemplates()
-      if (t.new_chapter) setTplChapter(t.new_chapter)
-      if (t.new_comic) setTplComic(t.new_comic)
-      if (t.comment_reply) setTplReply(t.comment_reply)
       setLoading(false)
+      // Carga en segundo plano
+      loadComics().catch(() => {})
+      getNotificationTemplates()
+        .then((t) => {
+          if (cancelled) return
+          if (t.new_chapter) setTplChapter(t.new_chapter)
+          if (t.new_comic) setTplComic(t.new_comic)
+          if (t.comment_reply) setTplReply(t.comment_reply)
+        })
+        .catch(() => {})
     })()
+    return () => {
+      cancelled = true
+    }
   }, [])
 
   useEffect(() => {
@@ -198,6 +219,23 @@ export default function Admin() {
   useEffect(() => {
     if (selectedComicId) loadChapters(selectedComicId)
   }, [selectedComicId])
+
+  useEffect(() => {
+    if (!blastComicId || !supabase) {
+      setBlastChapters([])
+      setBlastChapterId('')
+      return
+    }
+    ;(async () => {
+      const { data } = await supabase
+        .from('chapters')
+        .select('*')
+        .eq('comic_id', blastComicId)
+        .order('number', { ascending: true })
+      setBlastChapters((data as Chapter[]) || [])
+      setBlastChapterId('')
+    })()
+  }, [blastComicId])
 
   const loadUsers = async () => {
     if (!supabase) return
@@ -838,6 +876,74 @@ export default function Admin() {
     setMessage('Plantillas de notificación guardadas')
   }
 
+  const buildBlastLink = (): string | null => {
+    if (blastLinkKind === 'home') return '/home'
+    if (blastLinkKind === 'arcos') return '/arcos'
+    if (blastLinkKind === 'comic' && blastComicId) return `/comic/${blastComicId}`
+    if (blastLinkKind === 'chapter' && blastComicId && blastChapterId) {
+      return `/comic/${blastComicId}/chapter/${blastChapterId}`
+    }
+    return null
+  }
+
+  const sendManualNotification = async () => {
+    if (!supabase) return
+    const title = blastTitle.trim()
+    const body = blastBody.trim()
+    if (!title) {
+      setError('Escribe un título para el aviso.')
+      return
+    }
+    if (blastLinkKind === 'comic' && !blastComicId) {
+      setError('Elige el arco al que quieres llevar a los lectores.')
+      return
+    }
+    if (blastLinkKind === 'chapter' && (!blastComicId || !blastChapterId)) {
+      setError('Elige el arco y el capítulo.')
+      return
+    }
+    setBlastSending(true)
+    setError('')
+    setMessage('')
+    try {
+      const link = buildBlastLink()
+      let imageUrl: string | null = null
+      if (blastComicId) {
+        imageUrl = comics.find((c) => c.id === blastComicId)?.cover_url || null
+      }
+      if (blastChapterId) {
+        const ch = blastChapters.find((c) => c.id === blastChapterId)
+        if (ch?.icon_url) imageUrl = ch.icon_url
+      }
+      const { data, error: rpcErr } = await supabase.rpc('notify_all_users', {
+        p_type: 'system',
+        p_title: title,
+        p_body: body,
+        p_image_url: imageUrl,
+        p_link: link,
+        p_meta: { source: 'admin_manual' },
+      })
+      if (rpcErr) {
+        setError(rpcErr.message)
+        return
+      }
+      setMessage(
+        typeof data === 'number'
+          ? `Aviso enviado a ${data} lector(es).`
+          : 'Aviso enviado a todos los lectores.'
+      )
+      setBlastTitle('')
+      setBlastBody('')
+      setBlastLinkKind('none')
+      setBlastComicId('')
+      setBlastChapterId('')
+    } catch (e: any) {
+      setError(e?.message || 'No se pudo enviar el aviso')
+    } finally {
+      setBlastSending(false)
+    }
+  }
+
   const filteredComments = comments.filter((c) => {
     if (cFilterArc !== 'all' && c.chapters?.comic_id !== cFilterArc) return false
     if (cFilterChapter !== 'all' && c.chapter_id !== cFilterChapter) return false
@@ -859,7 +965,7 @@ export default function Admin() {
   const sortedForHome = [...comics].sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
 
   if (loading) {
-    return <div style={{ padding: 40, textAlign: 'center' }}>Comprobando admin…</div>
+    return <div style={{ padding: 24, textAlign: 'center', color: 'var(--muted)', fontSize: 14 }}>Cargando…</div>
   }
   if (!allowed) {
     return (
@@ -910,9 +1016,64 @@ export default function Admin() {
     <>
       <style>{`
         .admin-wrap { max-width: 1080px; margin: 0 auto; padding: 24px 16px 60px; font-family: 'Laffayette Comic Pro', cursive, Arial, sans-serif; }
-        .admin-tabs { display: flex; gap: 8px; margin-bottom: 20px; flex-wrap: wrap; }
-        .admin-tabs button { padding: 11px 16px; border-radius: 12px; border: 2px solid var(--border,#494949); cursor: pointer; background: var(--card); color: var(--text); font-family: inherit; font-weight: bold; font-size: 13px; }
-        .admin-tabs button.active { background: linear-gradient(135deg,#FFFF00,#FFD700); color: #111; border-color: #FFD700; }
+        .admin-tabs {
+          display: flex;
+          gap: 8px;
+          margin-bottom: 20px;
+          flex-wrap: nowrap;
+          overflow-x: auto;
+          overflow-y: hidden;
+          -webkit-overflow-scrolling: touch;
+          scrollbar-width: thin;
+          padding: 4px 2px 12px;
+          scroll-snap-type: x proximity;
+        }
+        .admin-tabs::-webkit-scrollbar { height: 6px; }
+        .admin-tabs::-webkit-scrollbar-thumb {
+          background: rgba(255, 215, 0, 0.55);
+          border-radius: 999px;
+        }
+        .admin-tabs button {
+          flex: 0 0 auto;
+          scroll-snap-align: start;
+          padding: 11px 18px;
+          border-radius: 999px;
+          border: 2px solid var(--border,#494949);
+          cursor: pointer;
+          background: var(--card);
+          color: var(--text);
+          font-family: inherit;
+          font-weight: bold;
+          font-size: 13px;
+          white-space: nowrap;
+          transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+        }
+        .admin-tabs button:hover {
+          transform: translateY(-1px);
+          box-shadow: 0 4px 12px rgba(0,0,0,0.12);
+        }
+        .admin-tabs button.active {
+          background: linear-gradient(135deg,#FFFF00,#FFD700);
+          color: #111;
+          border-color: #FFD700;
+          box-shadow: 0 4px 14px rgba(255, 215, 0, 0.35);
+        }
+        /* Drag: no selección de texto (móvil + PC) */
+        .row-list.draggable {
+          -webkit-user-select: none;
+          user-select: none;
+          -webkit-touch-callout: none;
+          -webkit-user-drag: element;
+          touch-action: none;
+        }
+        .row-list.draggable * {
+          -webkit-user-select: none;
+          user-select: none;
+          -webkit-touch-callout: none;
+        }
+        .row-list.draggable img {
+          pointer-events: none;
+        }
         .admin-card { background: var(--card); border-radius: 16px; padding: 22px; margin-bottom: 20px; box-shadow: 0 6px 18px rgba(0,0,0,0.1); }
         .admin-card h2 { margin: 0 0 14px; border-bottom: 3px solid #FFD700; padding-bottom: 8px; }
         .admin-card .field { display: block; margin: 12px 0 5px; font-size: 13px; color: var(--muted); font-weight: bold; }
@@ -1050,7 +1211,11 @@ export default function Admin() {
                   key={c.id}
                   className={`row-list draggable ${dragComicId === c.id ? 'dragging' : ''}`}
                   draggable
-                  onDragStart={() => setDragComicId(c.id)}
+                  onDragStart={(e) => {
+                    try { window.getSelection()?.removeAllRanges() } catch {}
+                    e.dataTransfer.effectAllowed = 'move'
+                    setDragComicId(c.id)
+                  }}
                   onDragOver={(e: DragEvent) => e.preventDefault()}
                   onDrop={() => onComicDrop(c.id)}
                   onDragEnd={() => setDragComicId(null)}
@@ -1082,7 +1247,11 @@ export default function Admin() {
                   key={c.id}
                   className={`row-list draggable ${dragRecentId === c.id ? 'dragging' : ''}`}
                   draggable
-                  onDragStart={() => setDragRecentId(c.id)}
+                  onDragStart={(e) => {
+                    try { window.getSelection()?.removeAllRanges() } catch {}
+                    e.dataTransfer.effectAllowed = 'move'
+                    setDragRecentId(c.id)
+                  }}
                   onDragOver={(e: DragEvent) => e.preventDefault()}
                   onDrop={() => onRecentDrop(c.id)}
                   onDragEnd={() => setDragRecentId(null)}
@@ -1094,7 +1263,8 @@ export default function Admin() {
                     <div>
                       <strong>{c.title}</strong>
                       <div style={{ fontSize: 12, color: 'var(--muted)' }}>
-                        recent_order: {c.recent_order ?? 0}
+                        {c.status}
+                        {c.is_featured ? ' · Principal' : ''}
                       </div>
                     </div>
                   </div>
@@ -1106,21 +1276,150 @@ export default function Admin() {
 
         {/* —— NOTIF TEMPLATES —— */}
         {tab === 'notif' && (
-          <div className="admin-card">
-            <h2>🔔 Textos de notificaciones</h2>
-            <p className="drag-hint">
-              Estos textos aparecen cuando hay un arco o capítulo nuevo, o cuando alguien responde un comentario. Puedes cambiarlos cuando quieras.
-            </p>
-            <label className="field">Título al publicar un capítulo</label>
-            <input value={tplChapter} onChange={(e) => setTplChapter(e.target.value)} />
-            <label className="field">Título al crear un arco</label>
-            <input value={tplComic} onChange={(e) => setTplComic(e.target.value)} />
-            <label className="field">Título cuando responden un comentario</label>
-            <input value={tplReply} onChange={(e) => setTplReply(e.target.value)} />
-            <button type="button" className="btn-yellow" onClick={saveTemplates}>
-              Guardar mensajes
-            </button>
-          </div>
+          <>
+            <div className="admin-card">
+              <h2>📢 Enviar un aviso ahora</h2>
+              <p className="drag-hint">
+                Escribe un mensaje y envíalo a <strong>todos los lectores</strong> de una vez.
+                Puedes dejarlo sin enlace, o llevarlos a Inicio, a la lista de Arcos, a un arco
+                concreto o a un capítulo.
+              </p>
+
+              <label className="field">Título del aviso</label>
+              <input
+                value={blastTitle}
+                onChange={(e) => setBlastTitle(e.target.value)}
+                placeholder="Ej. Mantenimiento el domingo"
+                maxLength={120}
+              />
+
+              <label className="field">Texto del aviso</label>
+              <textarea
+                value={blastBody}
+                onChange={(e) => setBlastBody(e.target.value)}
+                rows={4}
+                placeholder="Explica el aviso con claridad. Los lectores lo verán en la campanita."
+                maxLength={500}
+              />
+
+              <label className="field">¿A dónde lleva el aviso al tocarlo?</label>
+              <select
+                value={blastLinkKind}
+                onChange={(e) => {
+                  const v = e.target.value as typeof blastLinkKind
+                  setBlastLinkKind(v)
+                  if (v !== 'comic' && v !== 'chapter') {
+                    setBlastComicId('')
+                    setBlastChapterId('')
+                  }
+                  if (v === 'comic') setBlastChapterId('')
+                }}
+              >
+                <option value="none">Sin enlace (solo texto)</option>
+                <option value="home">Inicio</option>
+                <option value="arcos">Lista de Arcos</option>
+                <option value="comic">Un arco concreto</option>
+                <option value="chapter">Un capítulo concreto</option>
+              </select>
+
+              {(blastLinkKind === 'comic' || blastLinkKind === 'chapter') && (
+                <>
+                  <label className="field">Arco</label>
+                  <select
+                    value={blastComicId}
+                    onChange={(e) => setBlastComicId(e.target.value)}
+                  >
+                    <option value="">— Elige un arco —</option>
+                    {comics.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.title}
+                      </option>
+                    ))}
+                  </select>
+                </>
+              )}
+
+              {blastLinkKind === 'chapter' && (
+                <>
+                  <label className="field">Capítulo</label>
+                  <select
+                    value={blastChapterId}
+                    onChange={(e) => setBlastChapterId(e.target.value)}
+                    disabled={!blastComicId}
+                  >
+                    <option value="">— Elige un capítulo —</option>
+                    {blastChapters.map((ch) => (
+                      <option key={ch.id} value={ch.id}>
+                        #{ch.number} — {ch.title}
+                      </option>
+                    ))}
+                  </select>
+                </>
+              )}
+
+              <div
+                style={{
+                  marginTop: 16,
+                  padding: 14,
+                  borderRadius: 12,
+                  border: '2px solid rgba(255,215,0,0.45)',
+                  background: 'rgba(255,215,0,0.08)',
+                }}
+              >
+                <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 6 }}>
+                  Vista previa
+                </div>
+                <strong style={{ display: 'block', marginBottom: 4 }}>
+                  {blastTitle.trim() || 'Título del aviso'}
+                </strong>
+                <div style={{ fontSize: 14, color: 'var(--text)', whiteSpace: 'pre-wrap' }}>
+                  {blastBody.trim() || 'El texto del aviso aparecerá aquí.'}
+                </div>
+                <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 8 }}>
+                  {blastLinkKind === 'none' && 'Sin enlace'}
+                  {blastLinkKind === 'home' && '→ Inicio'}
+                  {blastLinkKind === 'arcos' && '→ Arcos'}
+                  {blastLinkKind === 'comic' &&
+                    (blastComicId
+                      ? `→ Arco: ${comics.find((c) => c.id === blastComicId)?.title || '…'}`
+                      : '→ Elige un arco')}
+                  {blastLinkKind === 'chapter' &&
+                    (blastChapterId
+                      ? `→ Capítulo: ${
+                          blastChapters.find((c) => c.id === blastChapterId)?.title || '…'
+                        }`
+                      : '→ Elige arco y capítulo')}
+                </div>
+              </div>
+
+              <button
+                type="button"
+                className="btn-yellow"
+                disabled={blastSending}
+                onClick={sendManualNotification}
+                style={{ marginTop: 14 }}
+              >
+                {blastSending ? 'Enviando…' : 'Enviar aviso a todos'}
+              </button>
+            </div>
+
+            <div className="admin-card">
+              <h2>🔔 Textos automáticos</h2>
+              <p className="drag-hint">
+                Estos títulos se usan solos cuando publicas un capítulo, creas un arco o alguien
+                responde un comentario. No hace falta tocarlos cada vez.
+              </p>
+              <label className="field">Al publicar un capítulo</label>
+              <input value={tplChapter} onChange={(e) => setTplChapter(e.target.value)} />
+              <label className="field">Al crear un arco</label>
+              <input value={tplComic} onChange={(e) => setTplComic(e.target.value)} />
+              <label className="field">Cuando responden un comentario</label>
+              <input value={tplReply} onChange={(e) => setTplReply(e.target.value)} />
+              <button type="button" className="btn-yellow" onClick={saveTemplates}>
+                Guardar textos automáticos
+              </button>
+            </div>
+          </>
         )}
 
         {/* —— USERS (kept compact) —— */}
@@ -1660,7 +1959,11 @@ export default function Admin() {
                     key={p.id}
                     className={`row-list draggable ${dragPageId === p.id ? 'dragging' : ''}`}
                     draggable
-                    onDragStart={() => setDragPageId(p.id)}
+                    onDragStart={(e) => {
+                    try { window.getSelection()?.removeAllRanges() } catch {}
+                    e.dataTransfer.effectAllowed = 'move'
+                    setDragPageId(p.id)
+                  }}
                     onDragOver={(e) => e.preventDefault()}
                     onDrop={() => onPageDrop(p.id)}
                     onDragEnd={() => setDragPageId(null)}
@@ -1739,7 +2042,11 @@ export default function Admin() {
                   key={s.id}
                   className={`row-list draggable ${dragSlideId === s.id ? 'dragging' : ''}`}
                   draggable
-                  onDragStart={() => setDragSlideId(s.id)}
+                  onDragStart={(e) => {
+                    try { window.getSelection()?.removeAllRanges() } catch {}
+                    e.dataTransfer.effectAllowed = 'move'
+                    setDragSlideId(s.id)
+                  }}
                   onDragOver={(e) => e.preventDefault()}
                   onDrop={() => onSlideDrop(s.id)}
                   onDragEnd={() => setDragSlideId(null)}
