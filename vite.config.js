@@ -3,6 +3,8 @@ import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 
 export default defineConfig({
+  // './' = funciona en Electron (file://), Capacitor y Vercel
+  base: '/',
   plugins: [
     react(),
     VitePWA({
@@ -14,16 +16,16 @@ export default defineConfig({
         theme_color: '#242424',
         background_color: '#f3f4f6',
         display: 'standalone',
-        start_url: '/',
+        start_url: './',
         icons: [
           {
-            src: '/loguito.png',
+            src: './loguito.png',
             sizes: '192x192',
             type: 'image/png',
             purpose: 'any',
           },
           {
-            src: '/loguito.png',
+            src: './loguito.png',
             sizes: '512x512',
             type: 'image/png',
             purpose: 'any maskable',
