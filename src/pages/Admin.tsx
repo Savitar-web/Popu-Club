@@ -591,6 +591,65 @@ export default function Admin() {
     setMessage('Orden de Recientes actualizado')
   }
 
+  const moveComic = async (id: string, dir: -1 | 1) => {
+    if (!supabase) return
+    const list = [...comics].sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
+    const i = list.findIndex((c) => c.id === id)
+    const j = i + dir
+    if (i < 0 || j < 0 || j >= list.length) return
+    const next = [...list]
+    ;[next[i], next[j]] = [next[j], next[i]]
+    const ordered = next.map((c, idx) => ({ ...c, sort_order: idx }))
+    setComics(ordered)
+    await Promise.all(ordered.map((c, idx) => supabase.from('comics').update({ sort_order: idx }).eq('id', c.id)))
+    setMessage('Orden actualizado')
+  }
+
+  const moveRecent = async (id: string, dir: -1 | 1) => {
+    if (!supabase) return
+    const list = [...recentList]
+    const i = list.findIndex((c) => c.id === id)
+    const j = i + dir
+    if (i < 0 || j < 0 || j >= list.length) return
+    const next = [...list]
+    ;[next[i], next[j]] = [next[j], next[i]]
+    const ordered = next.map((c, idx) => ({ ...c, recent_order: idx + 1 }))
+    setComics((prev) =>
+      prev.map((c) => {
+        const n = ordered.find((x) => x.id === c.id)
+        return n ? { ...c, recent_order: n.recent_order } : c
+      })
+    )
+    await Promise.all(ordered.map((c, idx) => supabase.from('comics').update({ recent_order: idx + 1 }).eq('id', c.id)))
+    setMessage('Recientes actualizado')
+  }
+
+  const moveSlide = async (id: string, dir: -1 | 1) => {
+    if (!supabase) return
+    const list = [...slides]
+    const i = list.findIndex((s) => s.id === id)
+    const j = i + dir
+    if (i < 0 || j < 0 || j >= list.length) return
+    const next = [...list]
+    ;[next[i], next[j]] = [next[j], next[i]]
+    const ordered = next.map((s, idx) => ({ ...s, sort_order: idx }))
+    setSlides(ordered)
+    await Promise.all(ordered.map((s, idx) => supabase.from('slider_images').update({ sort_order: idx }).eq('id', s.id)))
+  }
+
+  const movePage = async (id: string, dir: -1 | 1) => {
+    if (!supabase || !manageChapterId) return
+    const list = [...managePages]
+    const i = list.findIndex((pg) => pg.id === id)
+    const j = i + dir
+    if (i < 0 || j < 0 || j >= list.length) return
+    const next = [...list]
+    ;[next[i], next[j]] = [next[j], next[i]]
+    const ordered = next.map((pg, idx) => ({ ...pg, page_number: idx + 1 }))
+    setManagePages(ordered)
+    await Promise.all(ordered.map((pg, idx) => supabase.from('pages').update({ page_number: idx + 1 }).eq('id', pg.id)))
+  }
+
   const saveChapter = async (e: FormEvent) => {
     e.preventDefault()
     if (!supabase || !selectedComicId) return
@@ -1100,6 +1159,27 @@ export default function Admin() {
         .toggle input:checked + .toggle-slider:before { transform: translateX(24px); }
         .btn-yellow { margin-top: 14px; padding: 12px 20px; border: none; border-radius: 10px; cursor: pointer; background: linear-gradient(135deg,#FFFF00,#FFD700); font-family: inherit; font-weight: bold; }
         .btn-danger { background: #c0392b; color: #fff; border: none; padding: 8px 12px; border-radius: 8px; cursor: pointer; font-family: inherit; font-size: 13px; }
+        .btn-arrow {
+          width: 36px;
+          height: 36px;
+          padding: 0;
+          border: 2px solid var(--border, #494949);
+          border-radius: 8px;
+          background: var(--card, #fff);
+          color: var(--text);
+          font-size: 16px;
+          font-weight: bold;
+          cursor: pointer;
+          font-family: inherit;
+          line-height: 1;
+          flex-shrink: 0;
+          touch-action: manipulation;
+          user-select: none;
+          -webkit-user-select: none;
+        }
+        .btn-arrow:hover { border-color: #FFD700; background: rgba(255,215,0,0.15); }
+        .btn-arrow:active { transform: scale(0.95); }
+        .order-arrows { display: flex; flex-direction: column; gap: 4px; }
         .btn-small { padding: 7px 12px; margin-right: 6px; border-radius: 8px; border: 1px solid #ccc; cursor: pointer; font-family: inherit; background: var(--bg); color: var(--text); font-size: 13px; }
         .row-list { border-top: 1px solid rgba(128,128,128,0.25); padding: 12px 0; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; }
         .row-list.draggable { cursor: grab; border-radius: 12px; padding: 12px 12px; border: 2px solid transparent; transition: background 0.15s, border-color 0.15s; }
@@ -1220,11 +1300,15 @@ export default function Admin() {
                   onDrop={() => onComicDrop(c.id)}
                   onDragEnd={() => setDragComicId(null)}
                 >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1, minWidth: 0 }}>
+                    <div className="order-arrows" onClick={(e) => e.stopPropagation()}>
+                      <button type="button" className="btn-arrow" onClick={() => moveComic(c.id, -1)} title="Subir">↑</button>
+                      <button type="button" className="btn-arrow" onClick={() => moveComic(c.id, 1)} title="Bajar">↓</button>
+                    </div>
                     <span className="order-num">{i + 1}</span>
                     <span style={{ opacity: 0.35 }}>⋮⋮</span>
                     {c.cover_url && <img src={c.cover_url} className="page-thumb" alt="" />}
-                    <div>
+                    <div style={{ minWidth: 0 }}>
                       <strong>{c.title}</strong>
                       <div style={{ fontSize: 13, color: 'var(--muted)' }}>
                         {c.is_featured ? '⭐ Principal · ' : ''}
@@ -1240,7 +1324,7 @@ export default function Admin() {
             <div className="admin-card">
               <h2>🕒 Orden · Recientes</h2>
               <p className="drag-hint">
-                Controla cómo aparecen en «Recientes». Arrastra para reordenar. Se guarda al soltar.
+                Controla cómo aparecen en «Recientes». Arrastra o usa ↑ ↓. En móvil usa las flechas. Se guarda al instante.
               </p>
               {recentList.map((c, i) => (
                 <div
@@ -1256,11 +1340,15 @@ export default function Admin() {
                   onDrop={() => onRecentDrop(c.id)}
                   onDragEnd={() => setDragRecentId(null)}
                 >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1, minWidth: 0 }}>
+                    <div className="order-arrows" onClick={(e) => e.stopPropagation()}>
+                      <button type="button" className="btn-arrow" onClick={() => moveRecent(c.id, -1)} title="Subir">↑</button>
+                      <button type="button" className="btn-arrow" onClick={() => moveRecent(c.id, 1)} title="Bajar">↓</button>
+                    </div>
                     <span className="order-num">{i + 1}</span>
                     <span style={{ opacity: 0.35 }}>⋮⋮</span>
                     {c.cover_url && <img src={c.cover_url} className="page-thumb" alt="" />}
-                    <div>
+                    <div style={{ minWidth: 0 }}>
                       <strong>{c.title}</strong>
                       <div style={{ fontSize: 12, color: 'var(--muted)' }}>
                         {c.status}
@@ -1968,7 +2056,11 @@ export default function Admin() {
                     onDrop={() => onPageDrop(p.id)}
                     onDragEnd={() => setDragPageId(null)}
                   >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1 }}>
+                      <div className="order-arrows" onClick={(e) => e.stopPropagation()}>
+                        <button type="button" className="btn-arrow" onClick={() => movePage(p.id, -1)}>↑</button>
+                        <button type="button" className="btn-arrow" onClick={() => movePage(p.id, 1)}>↓</button>
+                      </div>
                       <span style={{ opacity: 0.4 }}>⋮⋮</span>
                       <img src={p.image_url} className="page-thumb" alt="" />
                       <span>#{p.page_number}</span>
@@ -2051,7 +2143,11 @@ export default function Admin() {
                   onDrop={() => onSlideDrop(s.id)}
                   onDragEnd={() => setDragSlideId(null)}
                 >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1 }}>
+                    <div className="order-arrows" onClick={(e) => e.stopPropagation()}>
+                      <button type="button" className="btn-arrow" onClick={() => moveSlide(s.id, -1)}>↑</button>
+                      <button type="button" className="btn-arrow" onClick={() => moveSlide(s.id, 1)}>↓</button>
+                    </div>
                     <span style={{ opacity: 0.4 }}>⋮⋮</span>
                     <img src={s.image_url} alt="" style={{ width: 120, height: 56, objectFit: 'cover', borderRadius: 8 }} />
                   </div>

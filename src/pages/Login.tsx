@@ -558,18 +558,18 @@ export default function Login() {
           font-style: normal;
         }
         * { box-sizing: border-box; }
-        html, body {
-          margin: 0; padding: 0; height: 100%; overflow: hidden;
+        html, body, #root {
+          margin: 0;
+          padding: 0;
+          min-height: 100%;
+          width: 100%;
         }
         body {
           background-image: url('/Fondodeweb.png');
           background-position: center;
           background-size: cover;
+          background-attachment: fixed;
           font-family: 'Laffayette Comic Pro', cursive, Arial, sans-serif;
-          display: flex;
-          justify-content: center;
-          align-items: center;
-          position: relative;
           color: white;
         }
         body::before {
@@ -578,31 +578,37 @@ export default function Login() {
           inset: 0;
           background-color: rgba(0, 0, 0, 0.72);
           z-index: 0;
+          pointer-events: none;
         }
         .auth-wrapper {
           position: relative;
           z-index: 1;
           width: 100%;
-          max-width: 400px;
-          padding: 12px;
+          min-height: 100vh;
+          min-height: 100dvh;
           display: flex;
           justify-content: center;
           align-items: center;
-          min-height: 100vh;
+          padding: 12px 10px;
+          box-sizing: border-box;
         }
         .registration-container,
         .login-container {
           background-color: rgba(255, 255, 255, 0.92);
-          padding: 26px 22px;
+          padding: 18px 18px 16px;
           box-shadow: 0 0 28px rgba(255, 255, 255, 0.18);
           border-radius: 16px;
           border: 5px solid #FFFF00;
           backdrop-filter: blur(12px);
           animation: slideIn 0.45s cubic-bezier(0.22, 1, 0.36, 1);
           width: 100%;
+          max-width: 380px;
+          margin: 0 auto;
+          max-height: min(92vh, 720px);
+          overflow-y: auto;
         }
         @keyframes slideIn {
-          from { opacity: 0; transform: translateY(24px) scale(0.97); }
+          from { opacity: 0; transform: translateY(20px) scale(0.97); }
           to { opacity: 1; transform: translateY(0) scale(1); }
         }
         h1 {
@@ -610,27 +616,27 @@ export default function Login() {
           color: rgb(128, 129, 212);
           text-shadow: 0 0 10px #FFFF00, 0 0 18px #FFFF00, 0 0 28px #FF8500;
           animation: neonGlow 1.5s infinite alternate;
-          font-size: 1.55rem;
-          margin: 0 0 18px 0;
+          font-size: 1.4rem;
+          margin: 0 0 12px 0;
         }
         @keyframes neonGlow {
           from { text-shadow: 0 0 12px #FFFF00, 0 0 20px #FF8500; }
           to { text-shadow: 0 0 20px #FFFF00, 0 0 32px #FF8500; }
         }
-        .input-group { margin-bottom: 13px; }
+        .input-group { margin-bottom: 10px; }
         label {
           display: block;
-          margin-bottom: 4px;
+          margin-bottom: 3px;
           color: #0a0a0a;
-          font-size: 13px;
+          font-size: 12px;
         }
         input[type="text"],
         input[type="email"],
         input[type="password"],
         select {
           width: 100%;
-          padding: 10px 12px;
-          border: 4px solid #494949;
+          padding: 8px 10px;
+          border: 3px solid #494949;
           background: rgb(102, 99, 120);
           color: #0a0a0a;
           font-size: 14px;
@@ -642,60 +648,64 @@ export default function Login() {
           background: rgb(82, 80, 97);
           border-color: #222;
         }
-        .profile-pic-group { text-align: center; margin-bottom: 14px; }
+        .profile-pic-group { text-align: center; margin-bottom: 10px; }
         .profile-pic-wrapper {
           position: relative;
-          width: 100px;
-          height: 100px;
+          width: 84px;
+          height: 84px;
           margin: 0 auto;
           border-radius: 50%;
           overflow: hidden;
-          border: 4px solid #FFFF00;
-          box-shadow: 0 0 12px #FFFF00;
+          border: 3px solid #FFFF00;
+          box-shadow: 0 0 10px #FFFF00;
           cursor: pointer;
         }
         #profile-pic-preview { width: 100%; height: 100%; object-fit: cover; }
-        input[type="file"] {
-          position: absolute; inset: 0; opacity: 0; cursor: pointer;
-        }
-        button[type="submit"],
-        .toggle-button {
-          width: 100%;
-          padding: 12px;
-          border: none;
-          background: linear-gradient(135deg, #FFFF00, #FFD700, #FFEA00);
-          color: black;
-          font-size: 15px;
+        .profile-pic-wrapper input[type="file"] {
+          position: absolute;
+          inset: 0;
+          opacity: 0;
           cursor: pointer;
-          border-radius: 8px;
-          font-family: 'Laffayette Comic Pro', cursive, Arial, sans-serif;
-          box-shadow: 0 0 10px #FFFF00;
-          transition: all 0.25s;
+          width: 100%;
+          height: 100%;
         }
-        button[type="submit"] { margin-top: 8px; margin-bottom: 14px; }
-        .toggle-button { margin-top: 0; margin-bottom: 10px; }
-        button[type="submit"]:hover,
-        .toggle-button:hover {
-          transform: scale(1.025);
-          box-shadow: 0 0 18px #FFFF00, 0 0 26px #FFD700;
-        }
-        button[type="submit"]:disabled,
-        .toggle-button:disabled {
-          opacity: 0.65; cursor: not-allowed; transform: none;
-        }
+        form button[type="submit"],
+        .toggle-button,
         .guest-button {
           width: 100%;
-          padding: 12px;
-          margin-top: 4px;
-          margin-bottom: 6px;
-          border: 3px solid #494949;
+          padding: 10px 12px;
+          margin-top: 6px;
+          border: none;
           border-radius: 8px;
-          background: transparent;
-          color: #222;
+          font-family: inherit;
           font-size: 14px;
-          font-family: 'Laffayette Comic Pro', cursive, Arial, sans-serif;
+          font-weight: bold;
           cursor: pointer;
-          transition: all 0.25s;
+        }
+        form button[type="submit"] {
+          background: linear-gradient(135deg, #FFFF00, #FFD700);
+          color: #111;
+          box-shadow: 0 0 10px #FFFF00;
+          margin-top: 8px;
+        }
+        form button[type="submit"]:disabled {
+          opacity: 0.6;
+          cursor: not-allowed;
+        }
+        .toggle-button {
+          background: linear-gradient(135deg, #FFFF00, #FFD700);
+          color: #111;
+          margin-top: 8px;
+        }
+        .toggle-button:disabled {
+          opacity: 0.6;
+          cursor: not-allowed;
+        }
+        .guest-button {
+          background: rgba(255,255,255,0.85);
+          border: 3px solid #494949;
+          color: #222;
+          margin-top: 6px;
         }
         .guest-button:hover {
           border-color: #FFFF00;
@@ -705,26 +715,26 @@ export default function Login() {
         .guest-hint {
           text-align: center;
           color: #555;
-          font-size: 12px;
-          margin: 0 0 8px 0;
+          font-size: 11px;
+          margin: 6px 0 4px 0;
           line-height: 1.35;
         }
         .guest-float {
           position: fixed;
-          top: 18px;
-          left: 18px;
+          top: 14px;
+          left: 14px;
           z-index: 50;
         }
         .guest-float-btn {
-          width: 52px;
-          height: 52px;
+          width: 48px;
+          height: 48px;
           border-radius: 50%;
           border: 3px solid #FFFF00;
           background: rgba(255,255,255,0.95);
           color: #222;
-          font-size: 22px;
+          font-size: 20px;
           cursor: pointer;
-          box-shadow: 0 4px 16px rgba(0,0,0,0.35);
+          box-shadow: 0 4px 14px rgba(0,0,0,0.35);
           display: flex;
           align-items: center;
           justify-content: center;
@@ -733,75 +743,75 @@ export default function Login() {
         .guest-float-btn:hover { transform: scale(1.08); }
         .guest-bubble {
           position: absolute;
-          top: 60px;
+          top: 56px;
           left: 0;
-          width: 260px;
+          width: 240px;
           background: rgba(255,255,255,0.97);
           border: 4px solid #FFFF00;
           border-radius: 14px;
-          padding: 16px;
+          padding: 14px;
           color: #222;
           box-shadow: 0 8px 24px rgba(0,0,0,0.35);
           animation: slideIn 0.25s ease;
         }
         .guest-bubble h3 {
-          margin: 0 0 8px;
-          font-size: 1.05rem;
+          margin: 0 0 6px;
+          font-size: 1rem;
           color: rgb(128, 129, 212);
           text-align: center;
         }
         .guest-bubble p {
-          margin: 0 0 12px;
-          font-size: 13px;
-          line-height: 1.4;
+          margin: 0 0 10px;
+          font-size: 12px;
+          line-height: 1.35;
           color: #333;
           text-align: center;
         }
         .error-message {
-          background: #ff4d4d; color: white; padding: 10px 12px;
-          border-radius: 8px; margin-bottom: 12px; font-size: 13px; text-align: center;
+          background: #ff4d4d; color: white; padding: 8px 10px;
+          border-radius: 8px; margin-bottom: 10px; font-size: 12px; text-align: center;
         }
         .info-message {
-          background: #2d6a4f; color: white; padding: 10px 12px;
-          border-radius: 8px; margin-bottom: 12px; font-size: 13px; text-align: center;
+          background: #2d6a4f; color: white; padding: 8px 10px;
+          border-radius: 8px; margin-bottom: 10px; font-size: 12px; text-align: center;
         }
         .recover-link {
           display: block;
           width: 100%;
           text-align: center;
-          margin-top: 6px;
-          margin-bottom: 4px;
+          margin-top: 4px;
+          margin-bottom: 2px;
           background: none;
           border: none;
           color: #555;
-          font-size: 13px;
+          font-size: 12px;
           font-family: inherit;
           text-decoration: underline;
           cursor: pointer;
-          padding: 8px;
+          padding: 6px;
         }
         .recover-link:hover { color: #222; }
         .recover-option {
           width: 100%;
-          padding: 12px;
-          margin-bottom: 10px;
+          padding: 10px;
+          margin-bottom: 8px;
           border: 3px solid #494949;
           border-radius: 8px;
           background: rgb(102, 99, 120);
           color: #0a0a0a;
           font-family: inherit;
-          font-size: 14px;
+          font-size: 13px;
           cursor: pointer;
           text-align: left;
         }
         .recover-option:hover { border-color: #FFFF00; }
-        .reset-header { text-align: center; margin-bottom: 14px; }
+        .reset-header { text-align: center; margin-bottom: 10px; }
         .reset-header img {
-          width: 84px; height: 84px; border-radius: 50%;
-          border: 4px solid #FFFF00; object-fit: cover; margin-bottom: 8px;
+          width: 72px; height: 72px; border-radius: 50%;
+          border: 3px solid #FFFF00; object-fit: cover; margin-bottom: 6px;
         }
-        .reset-header .name { color: #222; font-weight: bold; font-size: 1.1rem; }
-        .reset-header .mail { color: #555; font-size: 13px; }
+        .reset-header .name { color: #222; font-weight: bold; font-size: 1.05rem; }
+        .reset-header .mail { color: #555; font-size: 12px; }
         .cropper-overlay {
           position: fixed; inset: 0; background: rgba(0, 0, 0, 0.88);
           z-index: 1000; display: flex; justify-content: center; align-items: center; padding: 12px;
@@ -812,29 +822,29 @@ export default function Login() {
           width: 100%; max-width: 420px; overflow: hidden;
         }
         .cropper-header {
-          padding: 14px 16px; background: #333; color: white;
-          font-size: 1.15rem; text-align: center; border-bottom: 4px solid #FFFF00;
+          padding: 12px 14px; background: #333; color: white;
+          font-size: 1.05rem; text-align: center; border-bottom: 4px solid #FFFF00;
         }
-        .cropper-area { position: relative; width: 100%; height: 220px; background: #111; }
-        .cropper-controls { padding: 14px 16px 6px; display: flex; flex-direction: column; gap: 12px; }
-        .cropper-controls label { color: #222; font-size: 13px; margin-bottom: 2px; display: block; }
+        .cropper-area { position: relative; width: 100%; height: 200px; background: #111; }
+        .cropper-controls { padding: 12px 14px 4px; display: flex; flex-direction: column; gap: 10px; }
+        .cropper-controls label { color: #222; font-size: 12px; margin-bottom: 2px; display: block; }
         .cropper-controls input[type="range"] { width: 100%; accent-color: #FFD700; }
-        .pixel-inputs { display: flex; gap: 10px; }
+        .pixel-inputs { display: flex; gap: 8px; }
         .pixel-inputs > div { flex: 1; }
         .pixel-inputs input[type="number"] {
-          width: 100%; padding: 8px; border: 3px solid #494949; border-radius: 6px;
-          background: rgb(102, 99, 120); color: #0a0a0a; font-size: 14px; font-family: inherit;
+          width: 100%; padding: 7px; border: 3px solid #494949; border-radius: 6px;
+          background: rgb(102, 99, 120); color: #0a0a0a; font-size: 13px; font-family: inherit;
         }
-        .live-preview-box { text-align: center; padding: 10px 0 4px; }
+        .live-preview-box { text-align: center; padding: 8px 0 2px; }
         .live-preview-box img {
-          width: 90px; height: 90px; border-radius: 50%; border: 3px solid #FFFF00; object-fit: cover;
+          width: 80px; height: 80px; border-radius: 50%; border: 3px solid #FFFF00; object-fit: cover;
         }
         .cropper-actions {
-          display: flex; gap: 8px; padding: 8px 16px 16px; flex-wrap: wrap;
+          display: flex; gap: 8px; padding: 8px 14px 14px; flex-wrap: wrap;
         }
         .cropper-actions button {
-          flex: 1; min-width: 100px; padding: 11px 8px; border: none; border-radius: 8px;
-          font-family: inherit; font-size: 13px; cursor: pointer;
+          flex: 1; min-width: 90px; padding: 10px 6px; border: none; border-radius: 8px;
+          font-family: inherit; font-size: 12px; cursor: pointer;
         }
         .btn-cancel { background: #666; color: white; }
         .btn-auto { background: #4a4a8a; color: white; }
@@ -843,11 +853,18 @@ export default function Login() {
           box-shadow: 0 0 10px #FFFF00;
         }
         @media (max-width: 480px) {
-          .auth-wrapper { max-width: 100%; padding: 8px; }
-          .registration-container, .login-container { padding: 20px 14px; }
-          h1 { font-size: 1.35rem; }
+          .auth-wrapper {
+            padding: 8px;
+            align-items: flex-start;
+            padding-top: 20px;
+          }
+          .registration-container, .login-container {
+            max-height: none;
+            padding: 16px 12px;
+          }
+          h1 { font-size: 1.3rem; }
           .cropper-area { height: 180px; }
-          .guest-bubble { width: 230px; }
+          .guest-bubble { width: 220px; }
         }
       `}</style>
 

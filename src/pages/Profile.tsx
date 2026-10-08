@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, FormEvent } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import Header from '../components/Header'
 import Footer from '../components/Footer'
@@ -35,6 +35,9 @@ export default function Profile() {
   const [allComics, setAllComics] = useState<any[]>([])
   const [comicSearch, setComicSearch] = useState('')
   const [wall, setWall] = useState<any[]>([])
+  const [wallText, setWallText] = useState('')
+  const [replyTo, setReplyTo] = useState<any | null>(null)
+  const [posting, setPosting] = useState(false)
   const [modal, setModal] = useState<{ title: string; body: string; onConfirm?: () => void } | null>(null)
 
   const [showCropper, setShowCropper] = useState(false)
@@ -163,10 +166,10 @@ export default function Profile() {
 
       const { data: wallRaw } = await supabase
         .from('profile_wall')
-        .select('id, content, created_at, author_id, is_disabled')
+        .select('id, content, created_at, author_id, is_disabled, parent_id')
         .eq('profile_id', authUser.id)
         .order('created_at', { ascending: false })
-        .limit(50)
+        .limit(80)
       const posts = wallRaw || []
       const aIds = [...new Set(posts.map((x: any) => x.author_id).filter(Boolean))]
       const authors: Record<string, any> = {}
@@ -253,7 +256,7 @@ export default function Profile() {
       const path = cropType === 'avatar' ? `avatars/${user.id}-${Date.now()}.jpg` : `banners/${user.id}-${Date.now()}.jpg`
       await supabase.storage.from('comics').upload(path, blob, { upsert: true, contentType: 'image/jpeg' })
       url = supabase.storage.from('comics').getPublicUrl(path).data.publicUrl
-    } catch { /* fallback data url */ }
+    } catch { /* fallback */ }
     const patch: any = cropType === 'avatar' ? { avatar_url: url } : { banner: url }
     await supabase.from('profiles').update(patch).eq('id', user.id)
     if (cropType === 'avatar') setForm((f) => ({ ...f, profilePic: url }))
@@ -296,8 +299,54 @@ export default function Profile() {
     if (supabase) await supabase.auth.signOut()
     ;['currentUser', 'username', 'email', 'age', 'profilePic', 'role'].forEach((k) => localStorage.removeItem(k))
     window.dispatchEvent(new Event('profileUpdated'))
-    // Forzar navegación completa a login (evita quedarse en Home por rutas protegidas mal)
     window.location.assign('/login')
+  }
+
+  const postWall = async (e: FormEvent) => {
+    e.preventDefault()
+    if (!supabase || !user || !wallText.trim()) return
+    setPosting(true)
+    try {
+      const payload: any = {
+        profile_id: user.id,
+        author_id: user.id,
+        content: wallText.trim(),
+      }
+      if (replyTo?.id) payload.parent_id = replyTo.id
+      let data: any = null
+      let err: any = null
+      const res = await supabase
+        .from('profile_wall')
+        .insert(payload)
+        .select('id, content, created_at, author_id, is_disabled, parent_id')
+        .single()
+      data = res.data
+      err = res.error
+      if (err?.message?.includes('parent_id')) {
+        const res2 = await supabase
+          .from('profile_wall')
+          .insert({ profile_id: user.id, author_id: user.id, content: wallText.trim() })
+          .select('id, content, created_at, author_id, is_disabled')
+          .single()
+        data = res2.data
+        err = res2.error
+      }
+      if (err) {
+        setModal({ title: 'Error', body: err.message })
+        return
+      }
+      setWall((prev) => [
+        {
+          ...data,
+          profiles: { username: user.username, avatar_url: form.profilePic },
+        },
+        ...prev,
+      ])
+      setWallText('')
+      setReplyTo(null)
+    } finally {
+      setPosting(false)
+    }
   }
 
   const createFolder = async () => {
@@ -356,7 +405,7 @@ export default function Profile() {
       onConfirm: async () => {
         if (!supabase) return
         await supabase.from('profile_wall').delete().eq('id', id)
-        setWall((prev) => prev.filter((w) => w.id !== id))
+        setWall((prev) => prev.filter((w) => w.id !== id && w.parent_id !== id))
         setModal(null)
       },
     })
@@ -367,6 +416,8 @@ export default function Profile() {
   const filteredComics = allComics.filter(
     (c) => !comicSearch.trim() || c.title.toLowerCase().includes(comicSearch.toLowerCase())
   )
+  const roots = wall.filter((w) => !w.parent_id)
+  const repliesOf = (id: string) => wall.filter((w) => w.parent_id === id)
 
   return (
     <>
@@ -377,8 +428,6 @@ export default function Profile() {
           padding: 0 16px 48px;
           font-family: 'Laffayette Comic Pro', cursive, Arial, sans-serif;
         }
-
-        /* Hero */
         .pf-hero {
           position: relative;
           margin: 0 -16px 0;
@@ -446,7 +495,6 @@ export default function Profile() {
           border: 1px solid rgba(255,255,255,0.35);
         }
         .pf-btn.danger { background: #c0392b; color: #fff; }
-
         .pf-identity {
           margin-top: 60px;
           margin-bottom: 22px;
@@ -469,8 +517,6 @@ export default function Profile() {
           line-height: 1.45;
           max-width: 640px;
         }
-
-        /* Layout 2 columnas */
         .pf-layout {
           display: grid;
           grid-template-columns: 1fr 320px;
@@ -482,7 +528,6 @@ export default function Profile() {
           .pf-side { order: 2; }
           .pf-main { order: 1; }
         }
-
         .pf-card {
           background: var(--card);
           border-radius: 16px;
@@ -505,7 +550,6 @@ export default function Profile() {
           font-size: 0.95rem;
           color: var(--muted);
         }
-
         .wall-empty {
           text-align: center;
           color: var(--muted);
@@ -519,6 +563,11 @@ export default function Profile() {
           border-top: 1px solid rgba(128,128,128,0.18);
         }
         .wall-item:first-of-type { border-top: none; }
+        .wall-item.reply {
+          margin-left: 28px;
+          border-left: 2px solid rgba(255,215,0,0.35);
+          padding-left: 12px;
+        }
         .wall-item img {
           width: 42px;
           height: 42px;
@@ -542,7 +591,10 @@ export default function Profile() {
           font-weight: bold;
           cursor: pointer;
         }
-
+        .wall-actions button {
+          border: none; background: transparent; color: var(--muted);
+          font-family: inherit; font-size: 12px; font-weight: bold; cursor: pointer; padding: 4px 8px;
+        }
         .side-list { max-height: 220px; overflow-y: auto; }
         .side-item {
           padding: 10px 0;
@@ -553,7 +605,6 @@ export default function Profile() {
         .side-item a { color: var(--text); text-decoration: none; font-weight: bold; }
         .side-item a:hover { color: #c9a000; }
         .side-item .sub { font-size: 11px; color: var(--muted); margin-bottom: 2px; }
-
         .folder-chip {
           display: inline-flex;
           align-items: center;
@@ -585,7 +636,6 @@ export default function Profile() {
           object-fit: cover;
           border-radius: 8px;
         }
-
         .field-input, .field-textarea {
           width: 100%;
           max-width: 100%;
@@ -618,7 +668,6 @@ export default function Profile() {
         }
         input:checked + .slider { background: #FFD700; border-color: #e6c200; }
         input:checked + .slider:before { transform: translateX(22px); }
-
         .comic-pick {
           max-height: 160px;
           overflow-y: auto;
@@ -632,9 +681,7 @@ export default function Profile() {
           background: transparent; color: var(--text); font-family: inherit; cursor: pointer; font-size: 13px;
         }
         .comic-pick button:hover { background: rgba(255,215,0,0.12); }
-
         .muted { color: var(--muted); font-size: 13px; }
-
         .cropper-overlay {
           position: fixed; inset: 0; background: rgba(0,0,0,0.88); z-index: 1000;
           display: flex; justify-content: center; align-items: center; padding: 12px;
@@ -655,7 +702,6 @@ export default function Profile() {
         }
         .btn-apply { background: linear-gradient(135deg, #FFFF00, #FFD700); }
         .btn-cancel { background: #666; color: white; }
-
         .modal-overlay {
           position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 2000;
           display: flex; justify-content: center; align-items: center; padding: 16px;
@@ -671,19 +717,21 @@ export default function Profile() {
         }
         .modal-danger { background: #c0392b; color: #fff; }
         .modal-cancel { background: #666; color: #fff; }
-
         .lightbox {
           position: fixed; inset: 0; z-index: 3000; background: rgba(0,0,0,0.92);
           display: flex; align-items: center; justify-content: center; cursor: zoom-out;
         }
         .lightbox img { max-width: 95%; max-height: 95%; object-fit: contain; }
+        .reply-banner {
+          font-size: 13px; color: var(--muted); margin-bottom: 8px;
+          display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+        }
       `}</style>
 
       <Header />
       <ProfileButton />
 
       <div className="pf">
-        {/* Banner + avatar */}
         <div
           className="pf-hero"
           style={form.banner ? { backgroundImage: `url(${form.banner})` } : undefined}
@@ -757,28 +805,68 @@ export default function Profile() {
           )}
         </div>
 
-        {/* Muro + sidebar */}
         <div className="pf-layout">
           <div className="pf-main">
             <div className="pf-card">
               <h2>💬 Muro</h2>
+              <form onSubmit={postWall} style={{ marginBottom: 16 }}>
+                {replyTo && (
+                  <div className="reply-banner">
+                    Respondiendo a <strong>{replyTo.profiles?.username || 'Usuario'}</strong>
+                    <button type="button" onClick={() => setReplyTo(null)}>Cancelar</button>
+                  </div>
+                )}
+                <textarea
+                  className="field-textarea"
+                  value={wallText}
+                  onChange={(e) => setWallText(e.target.value)}
+                  placeholder={replyTo ? 'Escribe tu respuesta…' : 'Escribe en tu muro…'}
+                  maxLength={500}
+                  disabled={posting}
+                  style={{ minHeight: 70 }}
+                />
+                <button type="submit" className="pf-btn" disabled={posting || !wallText.trim()}>
+                  {posting ? 'Enviando…' : replyTo ? 'Responder' : 'Publicar'}
+                </button>
+              </form>
               {wall.length === 0 && (
                 <div className="wall-empty">Todavía no hay mensajes en tu muro.</div>
               )}
-              {wall.map((w) => (
-                <div key={w.id} className="wall-item">
-                  <Link to={`/profiles/${w.author_id}`}>
-                    <img src={w.profiles?.avatar_url || '/loguito.png'} alt="" />
-                  </Link>
-                  <div style={{ flex: 1 }}>
-                    <div className="wall-meta">
-                      <Link to={`/profiles/${w.author_id}`}>{w.profiles?.username || 'Usuario'}</Link>
-                      {' · '}
-                      {new Date(w.created_at).toLocaleDateString('es-ES')}
+              {roots.map((w) => (
+                <div key={w.id}>
+                  <div className="wall-item">
+                    <Link to={`/profiles/${w.author_id}`}>
+                      <img src={w.profiles?.avatar_url || '/loguito.png'} alt="" />
+                    </Link>
+                    <div style={{ flex: 1 }}>
+                      <div className="wall-meta">
+                        <Link to={`/profiles/${w.author_id}`}>{w.profiles?.username || 'Usuario'}</Link>
+                        {' · '}
+                        {new Date(w.created_at).toLocaleDateString('es-ES')}
+                      </div>
+                      <div className="wall-text">{w.content}</div>
+                      <div className="wall-actions">
+                        <button type="button" onClick={() => setReplyTo(w)}>Responder</button>
+                        <button type="button" className="wall-del" onClick={() => deleteWallPost(w.id)}>Borrar</button>
+                      </div>
                     </div>
-                    <div className="wall-text">{w.content}</div>
-                    <button type="button" className="wall-del" onClick={() => deleteWallPost(w.id)}>Borrar</button>
                   </div>
+                  {repliesOf(w.id).map((r) => (
+                    <div key={r.id} className="wall-item reply">
+                      <Link to={`/profiles/${r.author_id}`}>
+                        <img src={r.profiles?.avatar_url || '/loguito.png'} alt="" />
+                      </Link>
+                      <div style={{ flex: 1 }}>
+                        <div className="wall-meta">
+                          <Link to={`/profiles/${r.author_id}`}>{r.profiles?.username || 'Usuario'}</Link>
+                          {' · '}
+                          {new Date(r.created_at).toLocaleDateString('es-ES')}
+                        </div>
+                        <div className="wall-text">{r.content}</div>
+                        <button type="button" className="wall-del" onClick={() => deleteWallPost(r.id)}>Borrar</button>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               ))}
             </div>
@@ -846,9 +934,7 @@ export default function Profile() {
                 {likesCh.length === 0 && <p className="muted">Aún no hay likes.</p>}
                 {likesCh.map((l) => (
                   <div key={l.id} className="side-item" style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-                    {(l.chapters as any)?.icon_url ? (
-                      <img src={(l.chapters as any).icon_url} alt="" style={{ width: 36, height: 36, borderRadius: 8, objectFit: 'cover', border: '2px solid #FFD700' }} />
-                    ) : (l.chapters as any)?.comics?.cover_url ? (
+                    {(l.chapters as any)?.comics?.cover_url ? (
                       <img src={(l.chapters as any).comics.cover_url} alt="" style={{ width: 36, height: 48, borderRadius: 6, objectFit: 'cover' }} />
                     ) : null}
                     <div>

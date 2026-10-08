@@ -13,6 +13,7 @@ export default function Profiles() {
   const [myId, setMyId] = useState<string | null>(null)
   const [wall, setWall] = useState<any[]>([])
   const [wallText, setWallText] = useState('')
+  const [replyTo, setReplyTo] = useState<any | null>(null)
   const [posting, setPosting] = useState(false)
   const [likesCh, setLikesCh] = useState<any[]>([])
   const [likesCm, setLikesCm] = useState<any[]>([])
@@ -49,11 +50,11 @@ export default function Profiles() {
 
       const { data: wallRaw } = await supabase
         .from('profile_wall')
-        .select('id, content, created_at, author_id, is_disabled')
+        .select('id, content, created_at, author_id, is_disabled, parent_id')
         .eq('profile_id', id)
         .or('is_disabled.eq.false,is_disabled.is.null')
         .order('created_at', { ascending: false })
-        .limit(50)
+        .limit(80)
 
       const posts = wallRaw || []
       const authorIds = [...new Set(posts.map((x: any) => x.author_id).filter(Boolean))]
@@ -126,18 +127,42 @@ export default function Profiles() {
     setPosting(true)
     setError('')
     try {
+      const payload: any = {
+        profile_id: userId,
+        author_id: myId,
+        content: wallText.trim(),
+      }
+      if (replyTo?.id) payload.parent_id = replyTo.id
       const { data, error: err } = await supabase
         .from('profile_wall')
-        .insert({ profile_id: userId, author_id: myId, content: wallText.trim() })
-        .select('id, content, created_at, author_id, is_disabled')
+        .insert(payload)
+        .select('id, content, created_at, author_id, is_disabled, parent_id')
         .single()
       if (err) {
-        setError(err.message + ' — Ejecuta FIX-WALL-USERS.sql')
+        // fallback sin parent_id si la columna no existe
+        if (err.message?.includes('parent_id')) {
+          const { data: d2, error: e2 } = await supabase
+            .from('profile_wall')
+            .insert({ profile_id: userId, author_id: myId, content: wallText.trim() })
+            .select('id, content, created_at, author_id, is_disabled')
+            .single()
+          if (e2) {
+            setError(e2.message)
+            return
+          }
+          const { data: me } = await supabase.from('profiles').select('id, username, avatar_url').eq('id', myId).single()
+          setWall((prev) => [{ ...d2, profiles: me, parent_id: null }, ...prev])
+          setWallText('')
+          setReplyTo(null)
+          return
+        }
+        setError(err.message)
         return
       }
       const { data: me } = await supabase.from('profiles').select('id, username, avatar_url').eq('id', myId).single()
       setWall((prev) => [{ ...data, profiles: me }, ...prev])
       setWallText('')
+      setReplyTo(null)
     } finally {
       setPosting(false)
     }
@@ -166,6 +191,9 @@ export default function Profiles() {
       </>
     )
   }
+
+  const roots = wall.filter((w) => !w.parent_id)
+  const repliesOf = (id: string) => wall.filter((w) => w.parent_id === id)
 
   return (
     <>
@@ -206,10 +234,17 @@ export default function Profiles() {
         .pf-card h3 { margin: 16px 0 10px; font-size: 0.95rem; color: var(--muted); }
         .wall-item { display: flex; gap: 12px; padding: 14px 0; border-top: 1px solid rgba(128,128,128,0.18); }
         .wall-item:first-of-type { border-top: none; }
+        .wall-item.reply { margin-left: 28px; border-left: 2px solid rgba(255,215,0,0.35); padding-left: 12px; }
         .wall-item img { width: 42px; height: 42px; border-radius: 50%; object-fit: cover; border: 2px solid #FFD700; flex-shrink: 0; }
         .wall-meta { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
         .wall-meta a { color: var(--text); font-weight: bold; text-decoration: none; }
         .wall-text { color: var(--text); white-space: pre-wrap; line-height: 1.4; font-size: 14px; }
+        .wall-actions { margin-top: 6px; }
+        .wall-actions button {
+          border: none; background: transparent; color: var(--muted); font-family: inherit;
+          font-size: 12px; font-weight: bold; cursor: pointer; padding: 4px 8px;
+        }
+        .wall-actions button:hover { color: #c9a000; }
         .field-textarea {
           width: 100%; min-height: 80px; padding: 12px 14px; border-radius: 10px;
           border: 3px solid #494949; background: rgb(102,99,120); color: #0a0a0a;
@@ -242,6 +277,10 @@ export default function Profiles() {
           display: flex; align-items: center; justify-content: center; cursor: zoom-out;
         }
         .lightbox img { max-width: 95%; max-height: 95%; object-fit: contain; }
+        .reply-banner {
+          font-size: 13px; color: var(--muted); margin-bottom: 8px;
+          display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+        }
       `}</style>
 
       <Header />
@@ -279,36 +318,71 @@ export default function Profiles() {
           <div className="pf-main">
             <div className="pf-card">
               <h2>💬 Muro</h2>
-              {myId && myId !== userId && (
+              {myId ? (
                 <form onSubmit={postWall} style={{ marginBottom: 16 }}>
+                  {replyTo && (
+                    <div className="reply-banner">
+                      Respondiendo a <strong>{replyTo.profiles?.username || 'Usuario'}</strong>
+                      <button type="button" onClick={() => setReplyTo(null)}>Cancelar</button>
+                    </div>
+                  )}
                   <textarea
                     className="field-textarea"
                     value={wallText}
                     onChange={(e) => setWallText(e.target.value)}
-                    placeholder="Escribe en el muro…"
+                    placeholder={
+                      myId === userId
+                        ? 'Escribe en tu muro…'
+                        : replyTo
+                          ? 'Escribe tu respuesta…'
+                          : 'Escribe en el muro…'
+                    }
                     maxLength={500}
                     disabled={posting}
                   />
                   <button type="submit" className="pf-btn" disabled={posting || !wallText.trim()}>
-                    {posting ? 'Enviando…' : 'Publicar'}
+                    {posting ? 'Enviando…' : replyTo ? 'Responder' : 'Publicar'}
                   </button>
                 </form>
+              ) : (
+                <p className="muted">Inicia sesión para escribir en el muro.</p>
               )}
-              {!myId && <p className="muted">Inicia sesión para escribir en el muro.</p>}
               {wall.length === 0 && <p className="muted">Todavía no hay mensajes.</p>}
-              {wall.map((w) => (
-                <div key={w.id} className="wall-item">
-                  <Link to={`/profiles/${w.author_id}`}>
-                    <img src={w.profiles?.avatar_url || '/loguito.png'} alt="" />
-                  </Link>
-                  <div>
-                    <div className="wall-meta">
-                      <Link to={`/profiles/${w.author_id}`}>{w.profiles?.username || 'Usuario'}</Link>
-                      {' · '}
-                      {new Date(w.created_at).toLocaleDateString('es-ES')}
+              {roots.map((w) => (
+                <div key={w.id}>
+                  <div className="wall-item">
+                    <Link to={`/profiles/${w.author_id}`}>
+                      <img src={w.profiles?.avatar_url || '/loguito.png'} alt="" />
+                    </Link>
+                    <div style={{ flex: 1 }}>
+                      <div className="wall-meta">
+                        <Link to={`/profiles/${w.author_id}`}>{w.profiles?.username || 'Usuario'}</Link>
+                        {' · '}
+                        {new Date(w.created_at).toLocaleDateString('es-ES')}
+                      </div>
+                      <div className="wall-text">{w.content}</div>
+                      {myId && (
+                        <div className="wall-actions">
+                          <button type="button" onClick={() => setReplyTo(w)}>Responder</button>
+                        </div>
+                      )}
                     </div>
-                    <div className="wall-text">{w.content}</div>
                   </div>
+                  {repliesOf(w.id).map((r) => (
+                    <div key={r.id} className="wall-item reply">
+                      <Link to={`/profiles/${r.author_id}`}>
+                        <img src={r.profiles?.avatar_url || '/loguito.png'} alt="" />
+                      </Link>
+                      <div>
+                        <div className="wall-meta">
+                          <Link to={`/profiles/${r.author_id}`}>{r.profiles?.username || 'Usuario'}</Link>
+                          {' · '}
+                          {new Date(r.created_at).toLocaleDateString('es-ES')}
+                        </div>
+                        <div className="wall-text">{r.content}</div>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               ))}
             </div>

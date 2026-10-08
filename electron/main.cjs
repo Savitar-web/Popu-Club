@@ -1,74 +1,121 @@
-const { app, BrowserWindow } = require('electron')
+const { app, BrowserWindow, Menu, shell } = require('electron')
 const path = require('path')
 const http = require('http')
 const fs = require('fs')
+const { pathToFileURL } = require('url')
 
-const dist = path.join(__dirname, '../dist')
+const isDev = !app.isPackaged
+const DIST = path.join(__dirname, '..', 'dist')
 
 function contentType(filePath) {
-  if (filePath.endsWith('.html')) return 'text/html; charset=utf-8'
-  if (filePath.endsWith('.js')) return 'application/javascript; charset=utf-8'
-  if (filePath.endsWith('.css')) return 'text/css; charset=utf-8'
-  if (filePath.endsWith('.png')) return 'image/png'
-  if (filePath.endsWith('.jpg') || filePath.endsWith('.jpeg')) return 'image/jpeg'
-  if (filePath.endsWith('.webp')) return 'image/webp'
-  if (filePath.endsWith('.svg')) return 'image/svg+xml'
-  if (filePath.endsWith('.woff')) return 'font/woff'
-  if (filePath.endsWith('.woff2')) return 'font/woff2'
-  if (filePath.endsWith('.json') || filePath.endsWith('.webmanifest')) return 'application/json'
-  return 'application/octet-stream'
+  const ext = path.extname(filePath).toLowerCase()
+  const map = {
+    '.html': 'text/html; charset=utf-8',
+    '.js': 'application/javascript; charset=utf-8',
+    '.css': 'text/css; charset=utf-8',
+    '.json': 'application/json',
+    '.png': 'image/png',
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.webp': 'image/webp',
+    '.svg': 'image/svg+xml',
+    '.woff': 'font/woff',
+    '.woff2': 'font/woff2',
+    '.ico': 'image/x-icon',
+    '.webmanifest': 'application/manifest+json',
+  }
+  return map[ext] || 'application/octet-stream'
 }
 
-function createServer() {
-  return http.createServer((req, res) => {
-    let urlPath = decodeURIComponent((req.url || '/').split('?')[0])
-    if (urlPath === '/') urlPath = '/index.html'
+function startServer() {
+  return new Promise((resolve, reject) => {
+    const server = http.createServer((req, res) => {
+      try {
+        let urlPath = decodeURIComponent((req.url || '/').split('?')[0])
+        if (urlPath === '/') urlPath = '/index.html'
 
-    const filePath = path.normalize(path.join(dist, urlPath))
-    if (!filePath.startsWith(dist)) {
-      res.writeHead(403)
-      res.end()
-      return
-    }
+        const safe = path.normalize(urlPath).replace(/^(\.\.[/\\])+/, '')
+        let filePath = path.join(DIST, safe)
 
-    fs.readFile(filePath, (err, data) => {
-      if (err) {
-        // SPA: cualquier ruta desconocida → index.html
-        fs.readFile(path.join(dist, 'index.html'), (err2, html) => {
-          if (err2) {
-            res.writeHead(404)
-            res.end('Not found')
-            return
-          }
-          res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
-          res.end(html)
+        if (!filePath.startsWith(DIST)) {
+          res.writeHead(403)
+          res.end('Forbidden')
+          return
+        }
+
+        if (fs.existsSync(filePath) && fs.statSync(filePath).isDirectory()) {
+          filePath = path.join(filePath, 'index.html')
+        }
+
+        if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
+          // SPA fallback
+          filePath = path.join(DIST, 'index.html')
+        }
+
+        const data = fs.readFileSync(filePath)
+        res.writeHead(200, {
+          'Content-Type': contentType(filePath),
+          'Cache-Control': 'no-cache',
         })
-        return
+        res.end(data)
+      } catch (e) {
+        res.writeHead(500)
+        res.end(String(e))
       }
-      res.writeHead(200, { 'Content-Type': contentType(filePath) })
-      res.end(data)
     })
+
+    server.listen(0, '127.0.0.1', () => {
+      const { port } = server.address()
+      resolve({ server, port })
+    })
+    server.on('error', reject)
   })
 }
 
 function createWindow(port) {
+  // Sin menú File / Edit / View / Window
+  Menu.setApplicationMenu(null)
+
   const win = new BrowserWindow({
-    width: 1200,
+    width: 1280,
     height: 800,
-    icon: path.join(__dirname, '../build/icon.png'),
+    minWidth: 360,
+    minHeight: 560,
+    title: 'Popu-Club',
+    autoHideMenuBar: true,
+    // En Windows quita la barra de menú por completo
+    frame: true,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
+      sandbox: true,
     },
+    icon: path.join(__dirname, '..', 'build', 'icon.png'),
   })
+
+  // Por si el SO vuelve a mostrar el menú con Alt
+  win.setMenuBarVisibility(false)
+
   win.loadURL(`http://127.0.0.1:${port}/`)
+
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    shell.openExternal(url)
+    return { action: 'deny' }
+  })
+
+  return win
 }
 
-app.whenReady().then(() => {
-  const server = createServer()
-  server.listen(0, '127.0.0.1', () => {
-    const { port } = server.address()
-    createWindow(port)
+app.whenReady().then(async () => {
+  Menu.setApplicationMenu(null)
+
+  const { port } = await startServer()
+  createWindow(port)
+
+  app.on('activate', () => {
+    if (BrowserWindow.getAllWindows().length === 0) {
+      createWindow(port)
+    }
   })
 })
 
