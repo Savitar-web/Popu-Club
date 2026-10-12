@@ -28,6 +28,8 @@ function EyeIcon({ open }: { open: boolean }) {
     </svg>
   )
 }
+
+export default function Login() {
   const [screen, setScreen] = useState<Screen>('register')
   const [preview, setPreview] = useState('/loguito.png')
   const [error, setError] = useState('')
