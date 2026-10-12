@@ -44,6 +44,10 @@ export default function Login() {
     avatar_url?: string
   } | null>(null)
   const [askLogin, setAskLogin] = useState(false)
+  const [remember, setRemember] = useState(true)
+  const [showPass, setShowPass] = useState(false)
+  const [showPass2, setShowPass2] = useState(false)
+  const [savedAccounts, setSavedAccounts] = useState<{ id: string; pass: string }[]>([])
 
   const validatePassword = (password: string) =>
     password.length >= 8 && /[A-Z]/.test(password) && /[a-z]/.test(password) && /[0-9]/.test(password)
@@ -134,6 +138,28 @@ export default function Login() {
   useEffect(() => {
     if (screen !== 'register') setGuestBubble(false)
   }, [screen])
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem('popu_saved_accounts')
+      if (raw) setSavedAccounts(JSON.parse(raw))
+    } catch {
+      /* ignore */
+    }
+  }, [])
+
+  const saveAccount = (id: string, pass: string) => {
+    const next = [{ id, pass }, ...savedAccounts.filter((a) => a.id !== id)].slice(0, 5)
+    setSavedAccounts(next)
+    localStorage.setItem('popu_saved_accounts', JSON.stringify(next))
+  }
+
+  const fillSaved = (acc: { id: string; pass: string }) => {
+    const idEl = document.getElementById('login-email') as HTMLInputElement | null
+    const passEl = document.getElementById('login-password') as HTMLInputElement | null
+    if (idEl) idEl.value = acc.id
+    if (passEl) passEl.value = acc.pass
+  }
 
   const handleApply = () => {
     if (livePreview) setPreview(livePreview)
@@ -405,6 +431,7 @@ export default function Login() {
           avatar_url: '/loguito.png',
         })
       }
+      if (remember) saveAccount(identifier, password)
       setLoading(false)
       navigate('/home')
     } catch (err: any) {
@@ -817,6 +844,71 @@ export default function Login() {
           padding: 6px;
         }
         .recover-link:hover { color: #222; }
+        .check-row {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 10px;
+          margin: 8px 0 2px;
+        }
+        .remember {
+          display: inline-flex;
+          align-items: center;
+          gap: 8px;
+          color: #222;
+          font-size: 13px;
+          font-weight: bold;
+          cursor: pointer;
+          user-select: none;
+        }
+        .remember input { position: absolute; opacity: 0; width: 0; height: 0; }
+        .remember .box {
+          width: 22px; height: 22px; border-radius: 6px;
+          border: 2px solid #494949; background: #fff;
+          display: inline-flex; align-items: center; justify-content: center;
+          flex-shrink: 0;
+        }
+        .remember input:checked + .box {
+          background: linear-gradient(135deg, #FFFF00, #FFD700);
+          border-color: #e6c200;
+        }
+        .remember input:checked + .box::after {
+          content: '';
+          width: 6px; height: 11px;
+          border: solid #111;
+          border-width: 0 2.5px 2.5px 0;
+          transform: rotate(45deg) translate(-1px, -1px);
+        }
+        .pass-wrap { position: relative; }
+        .pass-wrap input { padding-right: 72px; }
+        .eye-btn {
+          position: absolute;
+          right: 6px; top: 50%;
+          transform: translateY(-50%);
+          border: none;
+          background: rgba(255,255,255,0.18);
+          color: #fff;
+          border-radius: 6px;
+          padding: 4px 8px;
+          font-size: 11px;
+          font-family: system-ui, sans-serif;
+          font-weight: 700;
+          cursor: pointer;
+        }
+        .saved-list { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; }
+        .saved-btn {
+          width: 100%;
+          text-align: left;
+          padding: 8px 10px;
+          border-radius: 8px;
+          border: 2px solid #494949;
+          background: rgba(255,255,0,0.18);
+          color: #222;
+          font-family: inherit;
+          font-size: 13px;
+          cursor: pointer;
+        }
+        .saved-btn:hover { border-color: #FFD700; }
         .recover-option {
           width: 100%;
           padding: 10px;
@@ -961,17 +1053,21 @@ export default function Login() {
               </div>
               <div className="input-group">
                 <label htmlFor="password">Contraseña:</label>
-                <input type="password" id="password" name="password" required disabled={loading} />
+                <div className="pass-wrap">
+                  <input type={showPass ? 'text' : 'password'} id="password" name="password" required disabled={loading} />
+                  <button type="button" className="eye-btn" onClick={() => setShowPass((v) => !v)}>
+                    {showPass ? 'Ocultar' : 'Ver'}
+                  </button>
+                </div>
               </div>
               <div className="input-group">
                 <label htmlFor="confirm_password">Confirmar contraseña:</label>
-                <input
-                  type="password"
-                  id="confirm_password"
-                  name="confirm_password"
-                  required
-                  disabled={loading}
-                />
+                <div className="pass-wrap">
+                  <input type={showPass2 ? 'text' : 'password'} id="confirm_password" name="confirm_password" required disabled={loading} />
+                  <button type="button" className="eye-btn" onClick={() => setShowPass2((v) => !v)}>
+                    {showPass2 ? 'Ocultar' : 'Ver'}
+                  </button>
+                </div>
               </div>
               <button type="submit" disabled={loading}>
                 {loading ? 'Creando cuenta…' : 'Registrar'}
@@ -989,6 +1085,15 @@ export default function Login() {
             {error && <div className="error-message">{error}</div>}
             {info && <div className="info-message">{info}</div>}
             <form onSubmit={handleLogin}>
+              {savedAccounts.length > 0 && (
+                <div className="saved-list">
+                  {savedAccounts.map((acc) => (
+                    <button key={acc.id} type="button" className="saved-btn" onClick={() => fillSaved(acc)}>
+                      Usar cuenta: {acc.id}
+                    </button>
+                  ))}
+                </div>
+              )}
               <div className="input-group">
                 <label htmlFor="login-email">Usuario o correo:</label>
                 <input
@@ -1003,8 +1108,18 @@ export default function Login() {
               </div>
               <div className="input-group">
                 <label htmlFor="login-password">Contraseña:</label>
-                <input type="password" id="login-password" name="password" required disabled={loading} />
+                <div className="pass-wrap">
+                  <input type={showPass ? 'text' : 'password'} id="login-password" name="password" required disabled={loading} />
+                  <button type="button" className="eye-btn" onClick={() => setShowPass((v) => !v)}>
+                    {showPass ? 'Ocultar' : 'Ver'}
+                  </button>
+                </div>
               </div>
+              <label className="remember">
+                <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
+                <span className="box" />
+                Recuérdame
+              </label>
               <button type="submit" disabled={loading}>
                 {loading ? 'Entrando…' : 'Iniciar Sesión'}
               </button>
@@ -1144,23 +1259,21 @@ export default function Login() {
               <form onSubmit={updatePassword}>
                 <div className="input-group">
                   <label>Nueva contraseña</label>
-                  <input
-                    type="password"
-                    value={newPass}
-                    onChange={(e) => setNewPass(e.target.value)}
-                    required
-                    disabled={loading}
-                  />
+                  <div className="pass-wrap">
+                    <input type={showPass ? 'text' : 'password'} value={newPass} onChange={(e) => setNewPass(e.target.value)} required disabled={loading} />
+                    <button type="button" className="eye-btn" onClick={() => setShowPass((v) => !v)}>
+                      {showPass ? 'Ocultar' : 'Ver'}
+                    </button>
+                  </div>
                 </div>
                 <div className="input-group">
                   <label>Confirmar contraseña</label>
-                  <input
-                    type="password"
-                    value={newPass2}
-                    onChange={(e) => setNewPass2(e.target.value)}
-                    required
-                    disabled={loading}
-                  />
+                  <div className="pass-wrap">
+                    <input type={showPass2 ? 'text' : 'password'} value={newPass2} onChange={(e) => setNewPass2(e.target.value)} required disabled={loading} />
+                    <button type="button" className="eye-btn" onClick={() => setShowPass2((v) => !v)}>
+                      {showPass2 ? 'Ocultar' : 'Ver'}
+                    </button>
+                  </div>
                 </div>
                 <button type="submit" disabled={loading}>
                   {loading ? 'Guardando…' : 'Continuar'}
