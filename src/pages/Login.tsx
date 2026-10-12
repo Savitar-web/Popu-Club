@@ -13,7 +13,21 @@ type Screen =
   | 'recover-password'
   | 'recover-new-pass'
 
-export default function Login() {
+function EyeIcon({ open }: { open: boolean }) {
+  return open ? (
+    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+      <path d="M3 3l18 18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+      <path d="M10.6 10.6a2 2 0 0 0 2.8 2.8" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+      <path d="M9.9 5.1A10.8 10.8 0 0 1 12 5c6 0 10 7 10 7a18 18 0 0 1-4.1 4.7" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+      <path d="M6.1 6.1C3.7 7.8 2 12 2 12s4 7 10 7c1.6 0 3-.4 4.2-1" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+    </svg>
+  ) : (
+    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+      <path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z" fill="none" stroke="currentColor" strokeWidth="2" />
+      <circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" strokeWidth="2" />
+    </svg>
+  )
+}
   const [screen, setScreen] = useState<Screen>('register')
   const [preview, setPreview] = useState('/loguito.png')
   const [error, setError] = useState('')
@@ -48,6 +62,7 @@ export default function Login() {
   const [showPass, setShowPass] = useState(false)
   const [showPass2, setShowPass2] = useState(false)
   const [savedAccounts, setSavedAccounts] = useState<{ id: string; pass: string }[]>([])
+  const [savedOpen, setSavedOpen] = useState(false)
 
   const validatePassword = (password: string) =>
     password.length >= 8 && /[A-Z]/.test(password) && /[a-z]/.test(password) && /[0-9]/.test(password)
@@ -880,35 +895,70 @@ export default function Login() {
           transform: rotate(45deg) translate(-1px, -1px);
         }
         .pass-wrap { position: relative; }
-        .pass-wrap input { padding-right: 72px; }
+        .pass-wrap input { padding-right: 42px; }
         .eye-btn {
           position: absolute;
-          right: 6px; top: 50%;
+          right: 4px; top: 50%;
           transform: translateY(-50%);
+          width: 34px; height: 34px;
           border: none;
-          background: rgba(255,255,255,0.18);
+          background: transparent;
           color: #fff;
-          border-radius: 6px;
-          padding: 4px 8px;
-          font-size: 11px;
-          font-family: system-ui, sans-serif;
-          font-weight: 700;
+          border-radius: 8px;
+          padding: 0;
+          cursor: pointer;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+        }
+        .eye-btn:hover { background: rgba(255,255,255,0.18); }
+        .remember-row {
+          position: relative;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 8px;
+          margin: 8px 0 2px;
+        }
+        .saved-toggle {
+          border: 2px solid #494949;
+          background: #fff;
+          color: #222;
+          border-radius: 8px;
+          padding: 6px 10px;
+          font-family: inherit;
+          font-size: 12px;
+          font-weight: bold;
           cursor: pointer;
         }
-        .saved-list { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; }
-        .saved-btn {
+        .saved-toggle:hover { border-color: #FFD700; }
+        .saved-menu {
+          position: absolute;
+          right: 0;
+          top: calc(100% + 6px);
+          z-index: 20;
+          min-width: 210px;
+          background: #fff;
+          border: 3px solid #FFFF00;
+          border-radius: 12px;
+          box-shadow: 0 10px 24px rgba(0,0,0,0.2);
+          padding: 6px;
+        }
+        .saved-item {
           width: 100%;
           text-align: left;
-          padding: 8px 10px;
-          border-radius: 8px;
-          border: 2px solid #494949;
-          background: rgba(255,255,0,0.18);
+          border: none;
+          background: transparent;
           color: #222;
           font-family: inherit;
           font-size: 13px;
+          font-weight: bold;
+          padding: 9px 10px;
+          border-radius: 8px;
           cursor: pointer;
         }
-        .saved-btn:hover { border-color: #FFD700; }
+        .saved-item:hover { background: rgba(255,215,0,0.28); }
+        .saved-item small { display: block; font-weight: normal; color: #666; font-size: 11px; }
         .recover-option {
           width: 100%;
           padding: 10px;
@@ -1055,8 +1105,8 @@ export default function Login() {
                 <label htmlFor="password">Contraseña:</label>
                 <div className="pass-wrap">
                   <input type={showPass ? 'text' : 'password'} id="password" name="password" required disabled={loading} />
-                  <button type="button" className="eye-btn" onClick={() => setShowPass((v) => !v)}>
-                    {showPass ? 'Ocultar' : 'Ver'}
+                  <button type="button" className="eye-btn" onClick={() => setShowPass((v) => !v)} aria-label={showPass ? 'Ocultar contraseña' : 'Ver contraseña'}>
+                    <EyeIcon open={showPass} />
                   </button>
                 </div>
               </div>
@@ -1064,8 +1114,8 @@ export default function Login() {
                 <label htmlFor="confirm_password">Confirmar contraseña:</label>
                 <div className="pass-wrap">
                   <input type={showPass2 ? 'text' : 'password'} id="confirm_password" name="confirm_password" required disabled={loading} />
-                  <button type="button" className="eye-btn" onClick={() => setShowPass2((v) => !v)}>
-                    {showPass2 ? 'Ocultar' : 'Ver'}
+                  <button type="button" className="eye-btn" onClick={() => setShowPass2((v) => !v)} aria-label={showPass2 ? 'Ocultar contraseña' : 'Ver contraseña'}>
+                    <EyeIcon open={showPass2} />
                   </button>
                 </div>
               </div>
@@ -1085,15 +1135,6 @@ export default function Login() {
             {error && <div className="error-message">{error}</div>}
             {info && <div className="info-message">{info}</div>}
             <form onSubmit={handleLogin}>
-              {savedAccounts.length > 0 && (
-                <div className="saved-list">
-                  {savedAccounts.map((acc) => (
-                    <button key={acc.id} type="button" className="saved-btn" onClick={() => fillSaved(acc)}>
-                      Usar cuenta: {acc.id}
-                    </button>
-                  ))}
-                </div>
-              )}
               <div className="input-group">
                 <label htmlFor="login-email">Usuario o correo:</label>
                 <input
@@ -1110,16 +1151,41 @@ export default function Login() {
                 <label htmlFor="login-password">Contraseña:</label>
                 <div className="pass-wrap">
                   <input type={showPass ? 'text' : 'password'} id="login-password" name="password" required disabled={loading} />
-                  <button type="button" className="eye-btn" onClick={() => setShowPass((v) => !v)}>
-                    {showPass ? 'Ocultar' : 'Ver'}
+                  <button type="button" className="eye-btn" onClick={() => setShowPass((v) => !v)} aria-label={showPass ? 'Ocultar contraseña' : 'Ver contraseña'}>
+                    <EyeIcon open={showPass} />
                   </button>
                 </div>
               </div>
-              <label className="remember">
-                <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
-                <span className="box" />
-                Recuérdame
-              </label>
+              <div className="remember-row">
+                <label className="remember">
+                  <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
+                  <span className="box" />
+                  Recuérdame
+                </label>
+                {savedAccounts.length > 0 && (
+                  <button type="button" className="saved-toggle" onClick={() => setSavedOpen((v) => !v)}>
+                    Recordados
+                  </button>
+                )}
+                {savedOpen && savedAccounts.length > 0 && (
+                  <div className="saved-menu">
+                    {savedAccounts.map((acc) => (
+                      <button
+                        key={acc.id}
+                        type="button"
+                        className="saved-item"
+                        onClick={() => {
+                          fillSaved(acc)
+                          setSavedOpen(false)
+                        }}
+                      >
+                        {acc.id}
+                        <small>Usar esta cuenta</small>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
               <button type="submit" disabled={loading}>
                 {loading ? 'Entrando…' : 'Iniciar Sesión'}
               </button>
@@ -1261,8 +1327,8 @@ export default function Login() {
                   <label>Nueva contraseña</label>
                   <div className="pass-wrap">
                     <input type={showPass ? 'text' : 'password'} value={newPass} onChange={(e) => setNewPass(e.target.value)} required disabled={loading} />
-                    <button type="button" className="eye-btn" onClick={() => setShowPass((v) => !v)}>
-                      {showPass ? 'Ocultar' : 'Ver'}
+                    <button type="button" className="eye-btn" onClick={() => setShowPass((v) => !v)} aria-label={showPass ? 'Ocultar contraseña' : 'Ver contraseña'}>
+                      <EyeIcon open={showPass} />
                     </button>
                   </div>
                 </div>
@@ -1270,8 +1336,8 @@ export default function Login() {
                   <label>Confirmar contraseña</label>
                   <div className="pass-wrap">
                     <input type={showPass2 ? 'text' : 'password'} value={newPass2} onChange={(e) => setNewPass2(e.target.value)} required disabled={loading} />
-                    <button type="button" className="eye-btn" onClick={() => setShowPass2((v) => !v)}>
-                      {showPass2 ? 'Ocultar' : 'Ver'}
+                    <button type="button" className="eye-btn" onClick={() => setShowPass2((v) => !v)} aria-label={showPass2 ? 'Ocultar contraseña' : 'Ver contraseña'}>
+                      <EyeIcon open={showPass2} />
                     </button>
                   </div>
                 </div>

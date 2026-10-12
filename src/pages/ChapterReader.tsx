@@ -476,6 +476,10 @@ export default function ChapterReader() {
     })
   }
 
+  const goComments = () => {
+    document.getElementById('comentarios')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
+
   const NavBar = ({ sticky }: { sticky?: boolean }) => (
     <div className={`nav-btns ${sticky ? 'nav-sticky' : ''}`}>
       <Link className="nav-btn" to={`/comic/${comicId}`}>
@@ -497,9 +501,9 @@ export default function ChapterReader() {
       >
         Siguiente
       </button>
-      <a className="nav-btn" href="#comentarios">
+      <button type="button" className="nav-btn" onClick={goComments}>
         Comentarios
-      </a>
+      </button>
       <button
         type="button"
         className={`nav-btn like-btn ${liked ? 'on' : ''}`}
