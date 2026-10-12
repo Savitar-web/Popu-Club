@@ -561,37 +561,50 @@ export default function Login() {
         html, body, #root {
           margin: 0;
           padding: 0;
+          height: 100%;
           min-height: 100%;
           width: 100%;
+          background: #111;
         }
-        body {
-          background-image: url('/Fondodeweb.png');
-          background-position: center;
-          background-size: cover;
-          background-attachment: fixed;
-          font-family: 'Laffayette Comic Pro', cursive, Arial, sans-serif;
-          color: white;
-        }
-        body::before {
-          content: '';
+        /* Fondo a pantalla completa (móvil, PC y Electron).
+           position:fixed evita el recorte de background-attachment:fixed en móvil. */
+        .login-bg {
           position: fixed;
           inset: 0;
-          background-color: rgba(0, 0, 0, 0.72);
           z-index: 0;
+          background-color: #111;
+          background-image: url('/Fondodeweb.png');
+          background-repeat: no-repeat;
+          background-position: center center;
+          background-size: cover;
           pointer-events: none;
         }
+        .login-bg::after {
+          content: '';
+          position: absolute;
+          inset: 0;
+          background: rgba(0, 0, 0, 0.72);
+        }
+        body {
+          font-family: 'Laffayette Comic Pro', cursive, Arial, sans-serif;
+          color: white;
+          background: #111;
+        }
+        /* Centrado real respecto a la ventana, no respecto al contenido */
         .auth-wrapper {
-          position: relative;
+          position: fixed;
+          inset: 0;
           z-index: 1;
           width: 100%;
-          min-height: 100vh;
-          min-height: 100dvh;
-          min-height: -webkit-fill-available;
+          height: 100%;
           display: flex;
+          flex-direction: column;
           justify-content: center;
           align-items: center;
-          padding: 12px 10px;
+          padding: 16px 12px;
           box-sizing: border-box;
+          overflow-y: auto;
+          -webkit-overflow-scrolling: touch;
         }
         .registration-container,
         .login-container {
@@ -604,9 +617,9 @@ export default function Login() {
           animation: slideIn 0.45s cubic-bezier(0.22, 1, 0.36, 1);
           width: 100%;
           max-width: 380px;
-          margin: 0 auto;
-          max-height: min(92vh, 720px);
-          overflow-y: auto;
+          margin: auto;
+          max-height: none;
+          overflow: visible;
           flex-shrink: 0;
         }
         @keyframes slideIn {
@@ -867,19 +880,21 @@ export default function Login() {
         }
         @media (max-width: 480px) {
           .auth-wrapper {
-            padding: 10px 8px;
-            align-items: center;
+            padding: 16px 10px;
             justify-content: center;
+            align-items: center;
           }
           .registration-container, .login-container {
-            max-height: min(90dvh, 680px);
             padding: 16px 12px;
+            margin: auto;
           }
           h1 { font-size: 1.3rem; }
           .cropper-area { height: 180px; }
           .guest-bubble { width: 220px; }
         }
       `}</style>
+
+      <div className="login-bg" aria-hidden="true" />
 
       {screen === 'register' && (
         <div className="guest-float">

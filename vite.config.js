@@ -20,6 +20,7 @@ export default defineConfig({
         skipWaiting: true,
         clientsClaim: true,
         cleanupOutdatedCaches: true,
+        importScripts: ['push-handler.js'],
         // Solo fallar si un archivo a precachear supera esto
         maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
         // Precachear app shell + assets ligeros (incluye png/webp de public raíz)

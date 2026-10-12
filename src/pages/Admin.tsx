@@ -40,6 +40,30 @@ async function uploadImage(
   return supabase.storage.from('comics').getPublicUrl(path).data.publicUrl
 }
 
+function ArrowBtn({ dir, onClick }: { dir: 'up' | 'down'; onClick: () => void }) {
+  const up = dir === 'up'
+  return (
+    <button
+      type="button"
+      className="btn-arrow"
+      onClick={onClick}
+      title={up ? 'Subir' : 'Bajar'}
+      aria-label={up ? 'Subir' : 'Bajar'}
+    >
+      <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+        <path
+          d={up ? 'M6 14.5 L12 8.5 L18 14.5' : 'M6 9.5 L12 15.5 L18 9.5'}
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2.8"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+    </button>
+  )
+}
+
 type Comic = {
   id: string
   title: string
@@ -181,6 +205,8 @@ export default function Admin() {
       if (!ok) {
         setError('restricted')
         setLoading(false)
+        // Avisa a los admins y guarda usuario/correo. El visitante no ve ese registro.
+        supabase.rpc('log_admin_denied_attempt').then(() => {}, () => {})
         return
       }
       setAllowed(true)
@@ -1255,6 +1281,65 @@ export default function Admin() {
           color: var(--text) !important;
           font-size: 13px !important;
         }
+        .admin-wrap, .admin-wrap * {
+          -webkit-user-select: none;
+          user-select: none;
+          -webkit-touch-callout: none;
+        }
+        .admin-wrap input,
+        .admin-wrap textarea,
+        .admin-wrap select {
+          -webkit-user-select: text;
+          user-select: text;
+          -webkit-touch-callout: default;
+        }
+        .btn-arrow {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          width: 40px;
+          height: 40px;
+          color: #111 !important;
+          background: #fff !important;
+          border: 2px solid #222 !important;
+          box-shadow: 0 1px 0 rgba(0,0,0,0.08);
+        }
+        .btn-arrow svg { display: block; pointer-events: none; }
+        .order-arrows { gap: 6px; }
+        .row-list > div:last-child {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 8px;
+          align-items: center;
+        }
+        .btn-small, .btn-danger { margin-right: 0; }
+        .admin-tabs {
+          position: sticky;
+          top: 0;
+          z-index: 30;
+          background: color-mix(in srgb, var(--bg, #f4f4f4) 92%, transparent);
+          backdrop-filter: blur(8px);
+        }
+        @media (max-width: 720px) {
+          .admin-wrap { padding: 12px 10px 72px; }
+          .admin-wrap h1 { font-size: 1.35rem; margin-bottom: 4px; }
+          .admin-card { padding: 14px 12px; border-radius: 14px; margin-bottom: 14px; }
+          .admin-card h2 { font-size: 1.05rem; }
+          .row-list { gap: 12px; align-items: flex-start; }
+          .stat-chip { min-width: calc(50% - 8px); padding: 12px; }
+          .stat-chip .n { font-size: 22px; }
+          .day-bar { flex-wrap: wrap; }
+          .day-bar strong { width: auto; }
+          .filters-bar input, .filters-bar select { min-width: 100%; }
+          .row-list > div:last-child .btn-small,
+          .row-list > div:last-child .btn-danger,
+          .row-list > div:last-child a.btn-small {
+            flex: 1 1 calc(50% - 8px);
+            text-align: center;
+            box-sizing: border-box;
+          }
+          .btn-yellow { width: 100%; }
+        }
       `}</style>
 
       <Header />
@@ -1302,8 +1387,8 @@ export default function Admin() {
                 >
                   <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1, minWidth: 0 }}>
                     <div className="order-arrows" onClick={(e) => e.stopPropagation()}>
-                      <button type="button" className="btn-arrow" onClick={() => moveComic(c.id, -1)} title="Subir">↑</button>
-                      <button type="button" className="btn-arrow" onClick={() => moveComic(c.id, 1)} title="Bajar">↓</button>
+                      <ArrowBtn dir="up" onClick={() => moveComic(c.id, -1)} />
+                      <ArrowBtn dir="down" onClick={() => moveComic(c.id, 1)} />
                     </div>
                     <span className="order-num">{i + 1}</span>
                     <span style={{ opacity: 0.35 }}>⋮⋮</span>
@@ -1324,7 +1409,7 @@ export default function Admin() {
             <div className="admin-card">
               <h2>🕒 Orden · Recientes</h2>
               <p className="drag-hint">
-                Controla cómo aparecen en «Recientes». Arrastra o usa ↑ ↓. En móvil usa las flechas. Se guarda al instante.
+                Controla cómo aparecen en «Recientes». Arrastra o usa las flechas. En móvil usa las flechas. Se guarda al instante.
               </p>
               {recentList.map((c, i) => (
                 <div
@@ -1342,8 +1427,8 @@ export default function Admin() {
                 >
                   <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1, minWidth: 0 }}>
                     <div className="order-arrows" onClick={(e) => e.stopPropagation()}>
-                      <button type="button" className="btn-arrow" onClick={() => moveRecent(c.id, -1)} title="Subir">↑</button>
-                      <button type="button" className="btn-arrow" onClick={() => moveRecent(c.id, 1)} title="Bajar">↓</button>
+                      <ArrowBtn dir="up" onClick={() => moveRecent(c.id, -1)} />
+                      <ArrowBtn dir="down" onClick={() => moveRecent(c.id, 1)} />
                     </div>
                     <span className="order-num">{i + 1}</span>
                     <span style={{ opacity: 0.35 }}>⋮⋮</span>
@@ -2058,8 +2143,8 @@ export default function Admin() {
                   >
                     <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1 }}>
                       <div className="order-arrows" onClick={(e) => e.stopPropagation()}>
-                        <button type="button" className="btn-arrow" onClick={() => movePage(p.id, -1)}>↑</button>
-                        <button type="button" className="btn-arrow" onClick={() => movePage(p.id, 1)}>↓</button>
+                        <ArrowBtn dir="up" onClick={() => movePage(p.id, -1)} />
+                        <ArrowBtn dir="down" onClick={() => movePage(p.id, 1)} />
                       </div>
                       <span style={{ opacity: 0.4 }}>⋮⋮</span>
                       <img src={p.image_url} className="page-thumb" alt="" />
@@ -2145,8 +2230,8 @@ export default function Admin() {
                 >
                   <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1 }}>
                     <div className="order-arrows" onClick={(e) => e.stopPropagation()}>
-                      <button type="button" className="btn-arrow" onClick={() => moveSlide(s.id, -1)}>↑</button>
-                      <button type="button" className="btn-arrow" onClick={() => moveSlide(s.id, 1)}>↓</button>
+                      <ArrowBtn dir="up" onClick={() => moveSlide(s.id, -1)} />
+                      <ArrowBtn dir="down" onClick={() => moveSlide(s.id, 1)} />
                     </div>
                     <span style={{ opacity: 0.4 }}>⋮⋮</span>
                     <img src={s.image_url} alt="" style={{ width: 120, height: 56, objectFit: 'cover', borderRadius: 8 }} />

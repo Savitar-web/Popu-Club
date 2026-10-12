@@ -1,6 +1,137 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { Link, useNavigate, useLocation } from 'react-router-dom'
+import { Capacitor, registerPlugin } from '@capacitor/core'
 import { supabase, isSupabaseConfigured } from '../lib/supabase'
+
+const LocalNotifications = registerPlugin<any>('LocalNotifications')
+const PushNotifications = registerPlugin<any>('PushNotifications')
+
+async function ensureNativeChannel() {
+  if (!Capacitor.isNativePlatform()) return
+  try {
+    await LocalNotifications.createChannel({
+      id: 'popu_club_default',
+      name: 'Avisos de Popu-Club',
+      description: 'Capítulos, arcos y respuestas',
+      importance: 5,
+      visibility: 1,
+      vibration: true,
+    })
+  } catch {
+    /* el plugin nativo se añade con cap sync */
+  }
+}
+
+async function showSystemNotification(n: {
+  title: string
+  body?: string | null
+  image_url?: string | null
+  link?: string | null
+}) {
+  if (Capacitor.isNativePlatform()) {
+    try {
+      await ensureNativeChannel()
+      let perm = await LocalNotifications.checkPermissions()
+      if (perm.display !== 'granted') perm = await LocalNotifications.requestPermissions()
+      if (perm.display === 'granted') {
+        await LocalNotifications.schedule({
+          notifications: [
+            {
+              id: Math.floor(Date.now() % 2147483647) || 1,
+              title: n.title,
+              body: n.body || '',
+              channelId: 'popu_club_default',
+              extra: { link: n.link || '/home' },
+            },
+          ],
+        })
+        return
+      }
+    } catch (e) {
+      console.warn('Aviso nativo', e)
+    }
+  }
+
+  if (typeof window === 'undefined' || !('Notification' in window)) return
+  if (Notification.permission !== 'granted') return
+  try {
+    const note = new Notification(n.title, {
+      body: n.body || '',
+      icon: n.image_url || '/pwa-192.png',
+      badge: '/pwa-192.png',
+      tag: n.link || n.title,
+      data: { url: n.link || '/home' },
+    })
+    note.onclick = () => {
+      window.focus()
+      if (n.link) window.location.href = n.link
+      note.close()
+    }
+  } catch (e) {
+    console.warn('Notification', e)
+  }
+}
+
+async function registerWebPush(userId: string) {
+  if (Capacitor.isNativePlatform() || !supabase) return
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) return
+  const vapid = import.meta.env.VITE_VAPID_PUBLIC_KEY as string | undefined
+  if (!vapid) return
+  try {
+    const perm = await Notification.requestPermission()
+    if (perm !== 'granted') return
+    const reg = await navigator.serviceWorker.ready
+    let sub = await reg.pushManager.getSubscription()
+    if (!sub) {
+      const padding = '='.repeat((4 - (vapid.length % 4)) % 4)
+      const base64 = (vapid + padding).replace(/-/g, '+').replace(/_/g, '/')
+      const raw = atob(base64)
+      const key = new Uint8Array(raw.length)
+      for (let i = 0; i < raw.length; i++) key[i] = raw.charCodeAt(i)
+      sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: key,
+      })
+    }
+    const json = sub.toJSON()
+    await supabase.from('push_subscriptions').upsert(
+      {
+        user_id: userId,
+        endpoint: sub.endpoint,
+        p256dh: json.keys?.p256dh || '',
+        auth: json.keys?.auth || '',
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'endpoint' }
+    )
+  } catch (e) {
+    console.warn('Web Push', e)
+  }
+}
+
+async function registerClosedAppPush(userId: string) {
+  if (!Capacitor.isNativePlatform() || !supabase) return
+  try {
+    let perm = await PushNotifications.checkPermissions()
+    if (perm.receive !== 'granted') perm = await PushNotifications.requestPermissions()
+    if (perm.receive !== 'granted') return
+    await PushNotifications.register()
+    await PushNotifications.addListener('registration', async (tok: { value: string }) => {
+      if (!tok?.value) return
+      await supabase!.from('push_devices').upsert(
+        {
+          user_id: userId,
+          platform: 'android',
+          token: tok.value,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'user_id,token' }
+      )
+    })
+  } catch (e) {
+    console.warn('Registro de avisos con la app cerrada', e)
+  }
+}
 
 type Noti = {
   id: string
@@ -113,32 +244,28 @@ export default function ProfileButton() {
     image_url?: string | null
     link?: string | null
   }) => {
-    if (typeof window === 'undefined' || !('Notification' in window)) return
-    if (Notification.permission !== 'granted') return
-    try {
-      const note = new Notification(n.title, {
-        body: n.body || '',
-        icon: n.image_url || '/loguito.png',
-        badge: '/loguito.png',
-        tag: n.link || n.title,
-        data: { url: n.link || '/home' },
-      })
-      note.onclick = () => {
-        window.focus()
-        if (n.link) {
-          window.location.href = n.link
-        }
-        note.close()
-      }
-    } catch (e) {
-      console.warn('Notification', e)
-    }
+    void showSystemNotification(n)
   }
 
   const requestPushPermission = async () => {
+    if (Capacitor.isNativePlatform()) {
+      try {
+        await ensureNativeChannel()
+        const perm = await LocalNotifications.checkPermissions()
+        if (perm.display !== 'granted') await LocalNotifications.requestPermissions()
+        await LocalNotifications.addListener(
+          'localNotificationActionPerformed',
+          (ev: { notification?: { extra?: { link?: string } } }) => {
+            const link = ev?.notification?.extra?.link
+            if (link) window.location.href = link
+          }
+        )
+      } catch {
+        /* plugin aún no sincronizado */
+      }
+    }
     if (!('Notification' in window)) return
-    if (Notification.permission === 'granted') return
-    if (Notification.permission === 'denied') return
+    if (Notification.permission === 'granted' || Notification.permission === 'denied') return
     try {
       await Notification.requestPermission()
     } catch {
@@ -175,6 +302,8 @@ export default function ProfileButton() {
         data: { user },
       } = await supabase.auth.getUser()
       if (!user) return
+      void registerClosedAppPush(user.id)
+      void registerWebPush(user.id)
 
       channel = supabase
         .channel('my-notifications')
