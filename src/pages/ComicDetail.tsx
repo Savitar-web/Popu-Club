@@ -4,6 +4,8 @@ import Header from '../components/Header'
 import Footer from '../components/Footer'
 import ProfileButton from '../components/ProfileButton'
 import { supabase, isSupabaseConfigured } from '../lib/supabase'
+import { cacheGet, cacheSet, warmImages } from '../lib/offlineCache'
+import { saveImages, localImage, withTimeout } from '../lib/offlineImages'
 
 type Chapter = {
   id: string
@@ -59,10 +61,32 @@ export default function ComicDetail() {
   }, [comicId])
 
   const loadData = async (id: string) => {
-    setLoading(true)
+    const cached = cacheGet<{
+      comic: Comic
+      chapters: Chapter[]
+      likedMap: Record<string, boolean>
+      totals: { views: number; likes: number; comments: number }
+    }>('comic_' + id)
+    if (cached) {
+      const cover = await localImage(cached.comic.cover_url)
+      const banner = await localImage(cached.comic.banner_url)
+      setComic({ ...cached.comic, cover_url: cover || cached.comic.cover_url, banner_url: banner || cached.comic.banner_url })
+      const chsLocal = await Promise.all(
+        cached.chapters.map(async (c) => ({
+          ...c,
+          icon_url: (await localImage(c.icon_url)) || c.icon_url,
+        }))
+      )
+      setChapters(chsLocal)
+      setLikedMap(cached.likedMap)
+      setTotals(cached.totals)
+      setLoading(false)
+    } else {
+      setLoading(true)
+    }
     setError('')
     if (!isSupabaseConfigured || !supabase) {
-      setError('Supabase no configurado')
+      if (!cached) setError('Supabase no configurado')
       setLoading(false)
       return
     }
@@ -71,24 +95,31 @@ export default function ComicDetail() {
         data: { user },
       } = await supabase.auth.getUser()
 
-      const { data: comicData, error: cErr } = await supabase
-        .from('comics')
-        .select('id, title, description, cover_url, banner_url, genre, status, created_at')
-        .eq('id', id)
-        .single()
+      const comicRes = await withTimeout(
+        supabase
+          .from('comics')
+          .select('id, title, description, cover_url, banner_url, genre, status, created_at')
+          .eq('id', id)
+          .single()
+      )
+      const comicData = comicRes.data
+      const cErr = comicRes.error
       if (cErr || !comicData) {
-        setError(cErr?.message || 'Arco no encontrado')
+        if (!cached) setError(cErr?.message || 'Arco no encontrado')
         setLoading(false)
         return
       }
       setComic(comicData as Comic)
 
-      const { data: chs } = await supabase
-        .from('chapters')
-        .select('id, comic_id, number, title, status, published_at, icon_url')
-        .eq('comic_id', id)
-        .eq('status', 'published')
-        .order('number', { ascending: true })
+      const chRes = await withTimeout(
+        supabase
+          .from('chapters')
+          .select('id, comic_id, number, title, status, published_at, icon_url')
+          .eq('comic_id', id)
+          .eq('status', 'published')
+          .order('number', { ascending: true })
+      )
+      const chs = chRes.data
 
       const list = (chs as Chapter[]) || []
       const enriched: Chapter[] = []
@@ -126,8 +157,46 @@ export default function ComicDetail() {
       setChapters(enriched)
       setLikedMap(liked)
       setTotals({ views: tv, likes: tl, comments: tc })
+      cacheSet('comic_' + id, {
+        comic: comicData,
+        chapters: enriched,
+        likedMap: liked,
+        totals: { views: tv, likes: tl, comments: tc },
+      })
+      warmImages([
+        comicData.cover_url,
+        comicData.banner_url,
+        ...enriched.map((c) => c.icon_url),
+      ])
+      void saveImages([
+        comicData.cover_url,
+        comicData.banner_url,
+        ...enriched.map((c) => c.icon_url),
+      ])
+      // precarga las páginas de cada capítulo para poder leerlas sin internet
+      void (async () => {
+        for (const ch of enriched) {
+          try {
+            const { data } = await withTimeout(
+              supabase!
+                .from('pages')
+                .select('image_url')
+                .eq('chapter_id', ch.id)
+                .order('page_number', { ascending: true }),
+              8000
+            )
+            const urls = ((data as { image_url: string }[]) || []).map((x) => x.image_url)
+            if (urls.length) {
+              cacheSet('pages_' + ch.id, urls)
+              await saveImages(urls)
+            }
+          } catch {
+            /* sigue con el siguiente */
+          }
+        }
+      })()
     } catch (e: any) {
-      setError(e?.message || 'Error')
+      if (!cached) setError(e?.message || 'Error')
     } finally {
       setLoading(false)
     }
@@ -319,6 +388,15 @@ export default function ComicDetail() {
           align-items: center;
           flex: 1;
           min-width: 180px;
+          text-decoration: none;
+          color: inherit;
+          cursor: pointer;
+        }
+        .chapter-info:hover .ch-title { color: #c9a000; }
+        .ch-title {
+          color: var(--text);
+          font-weight: bold;
+          text-decoration: none;
         }
         /* Iconos estilo Webtoon ~80px, sin borde amarillo */
         .ch-icon {
@@ -336,11 +414,8 @@ export default function ComicDetail() {
           font-weight: bold;
           font-size: 14px;
         }
-        .chapter-info a {
-          color: var(--text);
-          font-weight: bold;
-          text-decoration: none;
-        }
+        .chapter-row { transition: background 0.15s; }
+        .chapter-row:hover { background: rgba(255,215,0,0.06); }
         .chapter-date {
           font-size: 12px;
           color: var(--muted);
@@ -502,16 +577,16 @@ export default function ComicDetail() {
           <div>
             {sorted.map((ch) => (
               <div key={ch.id} className="chapter-row">
-                <div className="chapter-info">
+                <Link to={`/comic/${comic.id}/chapter/${ch.id}`} className="chapter-info">
                   {ch.icon_url ? (
                     <img src={ch.icon_url} alt="" className="ch-icon" />
                   ) : (
                     <span className="ch-icon">#{ch.number}</span>
                   )}
                   <div>
-                    <Link to={`/comic/${comic.id}/chapter/${ch.id}`}>
+                    <span className="ch-title">
                       #{ch.number} — {ch.title}
-                    </Link>
+                    </span>
                     <div className="chapter-date">
                       {ch.published_at
                         ? new Date(ch.published_at).toLocaleDateString('es-ES', {
@@ -523,7 +598,7 @@ export default function ComicDetail() {
                       {' · '}👁 {ch.views_count ?? 0}
                     </div>
                   </div>
-                </div>
+                </Link>
                 <div className="chapter-actions">
                   <button
                     type="button"

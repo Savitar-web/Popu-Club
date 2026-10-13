@@ -4,6 +4,7 @@ import Header from '../components/Header'
 import Footer from '../components/Footer'
 import ProfileButton from '../components/ProfileButton'
 import { supabase, isSupabaseConfigured } from '../lib/supabase'
+import { cacheGet, cacheSet, warmImages } from '../lib/offlineCache'
 
 type Comic = {
   id: string
@@ -44,21 +45,35 @@ export default function Arcos() {
   }, [])
 
   const load = async () => {
-    setLoading(true)
+    const cached = cacheGet<Comic[]>('arcos')
+    if (cached) {
+      setComics(cached)
+      warmImages(cached.map((c) => c.cover_url))
+      setLoading(false)
+    } else {
+      setLoading(true)
+    }
     setErr('')
     if (!isSupabaseConfigured || !supabase) {
       setLoading(false)
       return
     }
-    const { data, error } = await supabase
-      .from('comics')
-      .select('id, title, cover_url, genre, status, description, is_featured, sort_order, created_at')
-      .order('created_at', { ascending: false })
-    if (error) setErr(error.message)
-    const raw = (data as Comic[]) || []
-    setComics(raw)
-    console.log('[Arcos] comics loaded:', raw.length, raw.map((c) => c.title))
-    setLoading(false)
+    try {
+      const { data, error } = await supabase
+        .from('comics')
+        .select('id, title, cover_url, genre, status, description, is_featured, sort_order, created_at')
+        .order('created_at', { ascending: false })
+      if (error) setErr(error.message)
+      const raw = (data as Comic[]) || []
+      setComics(raw)
+      cacheSet('arcos', raw)
+      warmImages(raw.map((c) => c.cover_url))
+      console.log('[Arcos] comics loaded:', raw.length, raw.map((c) => c.title))
+    } catch {
+      /* sin red: se queda lo cacheado */
+    } finally {
+      setLoading(false)
+    }
   }
 
   const genres = useMemo(() => {

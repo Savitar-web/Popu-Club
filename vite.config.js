@@ -45,7 +45,7 @@ export default defineConfig({
             options: {
               cacheName: 'supabase-images',
               expiration: {
-                maxEntries: 400,
+                maxEntries: 800,
                 maxAgeSeconds: 60 * 60 * 24 * 30, // 30 días
               },
               cacheableResponse: {
@@ -58,13 +58,13 @@ export default defineConfig({
             urlPattern: ({ url }) =>
               url.hostname.endsWith('supabase.co') &&
               url.pathname.includes('/rest/v1/'),
-            handler: 'NetworkFirst',
+            handler: 'StaleWhileRevalidate',
             options: {
               cacheName: 'supabase-api',
               networkTimeoutSeconds: 8,
               expiration: {
-                maxEntries: 80,
-                maxAgeSeconds: 60 * 60 * 24, // 1 día
+                maxEntries: 200,
+                maxAgeSeconds: 60 * 60 * 24 * 7, // 7 días
               },
               cacheableResponse: {
                 statuses: [0, 200],

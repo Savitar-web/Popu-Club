@@ -6,6 +6,8 @@ import ProfileButton from '../components/ProfileButton'
 import { supabase, isSupabaseConfigured } from '../lib/supabase'
 import { notifyCommentReply } from '../lib/notifications'
 import { trackChapterView, flushPendingViews } from '../lib/offlineViews'
+import { cacheGet, cacheSet, warmImages } from '../lib/offlineCache'
+import { saveImages, localImage, withTimeout } from '../lib/offlineImages'
 
 type Page = { id: string; image_url: string; page_number: number }
 type Chapter = {
@@ -131,11 +133,48 @@ export default function ChapterReader() {
   }
 
   const load = async (cId: string, chId: string) => {
-    setLoading(true)
+    const cached = cacheGet<{
+      comic: Comic | null
+      chapter: Chapter | null
+      allChapters: Chapter[]
+      pages: Page[]
+      comments: Comment[]
+      likeCount: number
+      liked: boolean
+    }>('chapter_' + chId)
+    if (cached) {
+      const pagesLocal = await Promise.all(
+        cached.pages.map(async (pg) => ({
+          ...pg,
+          image_url: (await localImage(pg.image_url)) || pg.image_url,
+        }))
+      )
+      const icon = await localImage(cached.chapter?.icon_url)
+      setComic(cached.comic)
+      setChapter(cached.chapter ? { ...cached.chapter, icon_url: icon || cached.chapter.icon_url } : null)
+      setAllChapters(cached.allChapters)
+      const extra = pagesLocal.length ? pagesLocal : (
+        (cacheGet<string[]>('pages_' + chId) || []).map((url, i) => ({
+          id: 'c' + i,
+          image_url: url,
+          page_number: i + 1,
+        }))
+      )
+      const extraLocal = extra === pagesLocal ? pagesLocal : await Promise.all(
+        extra.map(async (pg) => ({ ...pg, image_url: (await localImage(pg.image_url)) || pg.image_url }))
+      )
+      setPages(extraLocal)
+      setComments(cached.comments)
+      setLikeCount(cached.likeCount)
+      setLiked(cached.liked)
+      setLoading(false)
+    } else {
+      setLoading(true)
+    }
     setError('')
     setPageNow(1)
     if (!isSupabaseConfigured || !supabase) {
-      setError('Supabase no configurado')
+      if (!cached) setError('Supabase no configurado')
       setLoading(false)
       return
     }
@@ -145,33 +184,41 @@ export default function ChapterReader() {
       } = await supabase.auth.getUser()
       setMyId(user?.id || null)
 
-      const { data: comicData } = await supabase
-        .from('comics')
-        .select('id, title, is_finished, status')
-        .eq('id', cId)
-        .single()
+      const comicRes = await withTimeout(
+        supabase.from('comics').select('id, title, is_finished, status').eq('id', cId).single()
+      )
+      const comicData = comicRes.data
       setComic(comicData as Comic)
 
-      const { data: chList } = await supabase
-        .from('chapters')
-        .select('id, comic_id, number, title, status, icon_url')
-        .eq('comic_id', cId)
-        .eq('status', 'published')
-        .order('number', { ascending: true })
+      const listRes = await withTimeout(
+        supabase
+          .from('chapters')
+          .select('id, comic_id, number, title, status, icon_url')
+          .eq('comic_id', cId)
+          .eq('status', 'published')
+          .order('number', { ascending: true })
+      )
+      const chList = listRes.data
       setAllChapters((chList as Chapter[]) || [])
 
-      const { data: ch } = await supabase
-        .from('chapters')
-        .select('id, comic_id, number, title, status, icon_url')
-        .eq('id', chId)
-        .single()
+      const chRes = await withTimeout(
+        supabase
+          .from('chapters')
+          .select('id, comic_id, number, title, status, icon_url')
+          .eq('id', chId)
+          .single()
+      )
+      const ch = chRes.data
       setChapter(ch as Chapter)
 
-      const { data: pgs } = await supabase
-        .from('pages')
-        .select('id, image_url, page_number')
-        .eq('chapter_id', chId)
-        .order('page_number', { ascending: true })
+      const pgRes = await withTimeout(
+        supabase
+          .from('pages')
+          .select('id, image_url, page_number')
+          .eq('chapter_id', chId)
+          .order('page_number', { ascending: true })
+      )
+      const pgs = pgRes.data
       setPages((pgs as Page[]) || [])
 
       try {
@@ -195,6 +242,7 @@ export default function ChapterReader() {
       if (cntErr) console.warn('likes count:', cntErr.message)
       setLikeCount(count || 0)
 
+      let likedNow = false
       if (user) {
         const { data: myLike, error: mlErr } = await supabase
           .from('likes')
@@ -203,7 +251,8 @@ export default function ChapterReader() {
           .eq('user_id', user.id)
           .maybeSingle()
         if (mlErr) console.warn('my like:', mlErr.message)
-        setLiked(!!myLike)
+        likedNow = !!myLike
+        setLiked(likedNow)
       } else {
         setLiked(false)
       }
@@ -243,8 +292,24 @@ export default function ChapterReader() {
         withLikes.push({ ...c, like_count: lc || 0, liked_by_me, reply_to_username })
       }
       setComments(withLikes)
+      cacheSet('chapter_' + chId, {
+        comic: comicData as Comic,
+        chapter: ch as Chapter,
+        allChapters: (chList as Chapter[]) || [],
+        pages: (pgs as Page[]) || [],
+        comments: withLikes,
+        likeCount: count || 0,
+        liked: likedNow,
+      })
+      const pageUrls = ((pgs as Page[]) || []).map((pg) => pg.image_url)
+      warmImages([
+        (ch as Chapter | null)?.icon_url,
+        ...pageUrls,
+        ...withLikes.map((c) => c.profiles?.avatar_url),
+      ])
+      void saveImages(pageUrls)
     } catch (e: any) {
-      setError(e?.message || 'Error')
+      if (!cached) setError(e?.message || 'Error')
     } finally {
       setLoading(false)
     }
@@ -611,8 +676,7 @@ export default function ChapterReader() {
           display: flex;
           flex-direction: column;
           background: #111;
-          border-radius: 12px;
-          overflow: hidden;
+          margin: 4px -12px 8px;
         }
         .pages-strip img {
           width: 100%;
@@ -702,16 +766,6 @@ export default function ChapterReader() {
           .reader-title { font-size: 1.05rem; }
           .nav-btns { gap: 6px; }
           .nav-btn { padding: 9px 10px; font-size: 12px; }
-          .nav-sticky {
-            position: sticky;
-            bottom: 8px;
-            z-index: 20;
-            background: color-mix(in srgb, var(--bg, #f4f4f4) 92%, transparent);
-            backdrop-filter: blur(8px);
-            padding: 8px;
-            border-radius: 14px;
-            box-shadow: 0 6px 20px rgba(0,0,0,0.12);
-          }
         }
       `}</style>
 
@@ -756,7 +810,7 @@ export default function ChapterReader() {
           )}
         </div>
 
-        <NavBar sticky />
+        <NavBar />
 
         {isLast && (
           <div className="end-box">

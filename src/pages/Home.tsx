@@ -4,6 +4,7 @@ import Header from '../components/Header'
 import Footer from '../components/Footer'
 import ProfileButton from '../components/ProfileButton'
 import { supabase, isSupabaseConfigured } from '../lib/supabase'
+import { cacheGet, cacheSet, warmImages } from '../lib/offlineCache'
 
 type Comic = {
   id: string
@@ -64,7 +65,21 @@ export default function Home() {
   }, [fullscreen, slides.length])
 
   const load = async () => {
-    setLoading(true)
+    const cached = cacheGet<{ featured: Comic[]; recent: Comic[]; slides: Slide[]; sliderOn: boolean }>('home')
+    if (cached) {
+      setFeatured(cached.featured)
+      setRecent(cached.recent)
+      setSlides(cached.slides)
+      setSliderOn(cached.sliderOn)
+      warmImages([
+        ...cached.slides.map((x) => x.image_url),
+        ...cached.featured.map((x) => x.banner_url || x.cover_url),
+        ...cached.recent.map((x) => x.cover_url),
+      ])
+      setLoading(false)
+    } else {
+      setLoading(true)
+    }
     setErr('')
     if (!isSupabaseConfigured || !supabase) {
       setLoading(false)
@@ -102,7 +117,24 @@ export default function Home() {
         .from('slider_images')
         .select('id, image_url, sort_order, is_active')
         .order('sort_order', { ascending: true })
-      setSlides(((sli as Slide[]) || []).filter((s) => s.is_active !== false))
+      const slidesOut = ((sli as Slide[]) || []).filter((s) => s.is_active !== false)
+      setSlides(slidesOut)
+      const feat = list
+        .filter((c) => !!c.is_featured)
+        .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
+      cacheSet('home', {
+        featured: feat,
+        recent: list,
+        slides: slidesOut,
+        sliderOn: settings?.value?.enabled !== false,
+      })
+      warmImages([
+        ...slidesOut.map((x) => x.image_url),
+        ...feat.map((x) => x.banner_url || x.cover_url),
+        ...list.map((x) => x.cover_url),
+      ])
+    } catch {
+      /* sin red: se queda lo cacheado */
     } finally {
       setLoading(false)
     }
