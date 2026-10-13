@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "857270410569",
+    "project_id": "popu-club",
+    "storage_bucket": "popu-club.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:857270410569:android:625759eaa48df148c7ce98",
+        "android_client_info": {
+          "package_name": "com.cherrybless.popuclub"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCPODe8hSBb-dHR-j5gbzqmzGB3wjSlwiA"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
