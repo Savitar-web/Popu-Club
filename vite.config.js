@@ -21,62 +21,43 @@ export default defineConfig({
         clientsClaim: true,
         cleanupOutdatedCaches: true,
         importScripts: ['push-handler.js'],
-        // Solo fallar si un archivo a precachear supera esto
         maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
-        // Precachear app shell + assets ligeros (incluye png/webp de public raíz)
         globPatterns: [
           '**/*.{js,css,html,ico,svg,woff,woff2,webp,png,jpg,jpeg}',
         ],
-        // NO precachear carpetas pesadas de portadas (sí se cachean al visitarlas)
         globIgnores: [
           '**/iconitos/portadas*/**',
           '**/iconitos/nubes*/**',
           '**/node_modules/**',
         ],
-        // Runtime: imágenes remotas (Supabase) y resto de public
         runtimeCaching: [
           {
-            // Storage de Supabase (portadas, páginas, avatares)
-            urlPattern: ({ url }) =>
-              url.hostname.endsWith('supabase.co') &&
-              (url.pathname.includes('/storage/') ||
-                url.pathname.includes('/object/public/')),
+            urlPattern: /^https:\/\/.*\.supabase\.co\/.*\/(storage|object\/public)\/.*/i,
             handler: 'CacheFirst',
             options: {
               cacheName: 'supabase-images',
               expiration: {
-                maxEntries: 800,
-                maxAgeSeconds: 60 * 60 * 24 * 30, // 30 días
+                maxEntries: 400,
+                maxAgeSeconds: 60 * 60 * 24 * 30,
               },
-              cacheableResponse: {
-                statuses: [0, 200],
-              },
+              cacheableResponse: { statuses: [0, 200] },
             },
           },
           {
-            // API REST de Supabase (listas de arcos, etc.) — network first
-            urlPattern: ({ url }) =>
-              url.hostname.endsWith('supabase.co') &&
-              url.pathname.includes('/rest/v1/'),
-            handler: 'StaleWhileRevalidate',
+            urlPattern: /^https:\/\/.*\.supabase\.co\/rest\/v1\/.*/i,
+            handler: 'NetworkFirst',
             options: {
               cacheName: 'supabase-api',
               networkTimeoutSeconds: 8,
               expiration: {
-                maxEntries: 200,
-                maxAgeSeconds: 60 * 60 * 24 * 7, // 7 días
+                maxEntries: 80,
+                maxAgeSeconds: 60 * 60 * 24,
               },
-              cacheableResponse: {
-                statuses: [0, 200],
-              },
+              cacheableResponse: { statuses: [0, 200] },
             },
           },
           {
-            // Imágenes estáticas del propio dominio (public/)
-            urlPattern: ({ request, url }) =>
-              request.destination === 'image' &&
-              (url.origin === self.location.origin ||
-                url.pathname.startsWith('/')),
+            urlPattern: /\.(?:png|jpg|jpeg|webp|gif|svg|avif)(?:\?.*)?$/i,
             handler: 'CacheFirst',
             options: {
               cacheName: 'local-images',
@@ -84,14 +65,11 @@ export default defineConfig({
                 maxEntries: 200,
                 maxAgeSeconds: 60 * 60 * 24 * 60,
               },
-              cacheableResponse: {
-                statuses: [0, 200],
-              },
+              cacheableResponse: { statuses: [0, 200] },
             },
           },
           {
-            // Fuentes
-            urlPattern: ({ request }) => request.destination === 'font',
+            urlPattern: /\.(?:woff2?|ttf|otf)(?:\?.*)?$/i,
             handler: 'CacheFirst',
             options: {
               cacheName: 'fonts',
@@ -99,9 +77,7 @@ export default defineConfig({
                 maxEntries: 20,
                 maxAgeSeconds: 60 * 60 * 24 * 365,
               },
-              cacheableResponse: {
-                statuses: [0, 200],
-              },
+              cacheableResponse: { statuses: [0, 200] },
             },
           },
         ],
@@ -115,18 +91,8 @@ export default defineConfig({
         display: 'standalone',
         start_url: '/',
         icons: [
-          {
-            src: '/pwa-192.png',
-            sizes: '192x192',
-            type: 'image/png',
-            purpose: 'any',
-          },
-          {
-            src: '/pwa-512.png',
-            sizes: '512x512',
-            type: 'image/png',
-            purpose: 'any maskable',
-          },
+          { src: '/pwa-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
+          { src: '/pwa-512.png', sizes: '512x512', type: 'image/png', purpose: 'any maskable' },
         ],
       },
     }),
