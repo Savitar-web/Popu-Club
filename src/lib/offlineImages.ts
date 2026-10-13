@@ -65,14 +65,19 @@ export async function localImage(url: string | null | undefined): Promise<string
   return url
 }
 
-export async function withTimeout<T>(promise: Promise<T>, ms = 7000): Promise<T> {
-  let timer: ReturnType<typeof setTimeout>
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error('timeout')), ms)
+/** Evita que una petición se quede colgada cuando no hay internet. */
+export function withTimeout<T>(work: any, ms = 7000): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('timeout')), ms)
+    Promise.resolve(work).then(
+      (value) => {
+        clearTimeout(timer)
+        resolve(value)
+      },
+      (err) => {
+        clearTimeout(timer)
+        reject(err)
+      }
+    )
   })
-  try {
-    return await Promise.race([promise, timeout])
-  } finally {
-    clearTimeout(timer!)
-  }
 }

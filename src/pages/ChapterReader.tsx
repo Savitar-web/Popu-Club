@@ -184,13 +184,13 @@ export default function ChapterReader() {
       } = await supabase.auth.getUser()
       setMyId(user?.id || null)
 
-      const comicRes = await withTimeout(
+      const comicRes = await withTimeout<{ data: Comic | null; error: { message: string } | null }>(
         supabase.from('comics').select('id, title, is_finished, status').eq('id', cId).single()
       )
       const comicData = comicRes.data
       setComic(comicData as Comic)
 
-      const listRes = await withTimeout(
+      const listRes = await withTimeout<{ data: Chapter[] | null; error: { message: string } | null }>(
         supabase
           .from('chapters')
           .select('id, comic_id, number, title, status, icon_url')
@@ -201,7 +201,7 @@ export default function ChapterReader() {
       const chList = listRes.data
       setAllChapters((chList as Chapter[]) || [])
 
-      const chRes = await withTimeout(
+      const chRes = await withTimeout<{ data: Chapter | null; error: { message: string } | null }>(
         supabase
           .from('chapters')
           .select('id, comic_id, number, title, status, icon_url')
@@ -211,7 +211,7 @@ export default function ChapterReader() {
       const ch = chRes.data
       setChapter(ch as Chapter)
 
-      const pgRes = await withTimeout(
+      const pgRes = await withTimeout<{ data: Page[] | null; error: { message: string } | null }>(
         supabase
           .from('pages')
           .select('id, image_url, page_number')

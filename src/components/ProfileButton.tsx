@@ -408,6 +408,25 @@ export default function ProfileButton() {
     setUnread(0)
   }
 
+  const deleteNoti = async (id: string) => {
+    if (!supabase) return
+    const wasUnread = notifs.some((n) => n.id === id && !n.read)
+    await supabase.from('notifications').delete().eq('id', id)
+    setNotifs((prev) => prev.filter((n) => n.id !== id))
+    if (wasUnread) setUnread((u) => Math.max(0, u - 1))
+  }
+
+  const deleteAll = async () => {
+    if (!supabase || notifs.length === 0) return
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
+    if (!user) return
+    await supabase.from('notifications').delete().eq('user_id', user.id)
+    setNotifs([])
+    setUnread(0)
+  }
+
   const panelBg = theme === 'light' ? '#e0e0e0' : '#2a2a2a'
   const panelFg = theme === 'light' ? '#222' : '#f0f0f0'
 
@@ -512,48 +531,87 @@ export default function ProfileButton() {
 
       {showNotifs && !isGuest && (
         <div
+          className="popu-noti-list"
           style={{
             position: 'absolute',
             top: 70,
             right: 0,
-            width: 300,
-            maxHeight: 380,
+            width: 320,
+            maxHeight: 420,
             overflowY: 'auto',
             backgroundColor: panelBg,
             color: panelFg,
-            padding: 12,
-            borderRadius: 10,
-            boxShadow: '0 6px 18px rgba(0,0,0,0.35)',
+            padding: '12px 8px 12px 12px',
+            borderRadius: 12,
+            boxShadow: '0 8px 24px rgba(0,0,0,0.35)',
             border: '1px solid #999',
             fontSize: 13,
           }}
         >
+          <style>{`
+            .popu-noti-list {
+              scrollbar-width: thin;
+              scrollbar-color: #9a9a9a transparent;
+            }
+            .popu-noti-list::-webkit-scrollbar { width: 6px; }
+            .popu-noti-list::-webkit-scrollbar-track { background: transparent; margin: 6px 0; }
+            .popu-noti-list::-webkit-scrollbar-thumb {
+              background: #9a9a9a;
+              border-radius: 999px;
+            }
+            .popu-noti-list::-webkit-scrollbar-thumb:hover { background: #6e6e6e; }
+            .noti-x:hover { background: #e74c3c !important; color: #fff !important; }
+          `}</style>
           <div
             style={{
               display: 'flex',
               justifyContent: 'space-between',
               alignItems: 'center',
+              gap: 8,
               marginBottom: 10,
+              paddingRight: 4,
             }}
           >
             <strong style={{ fontSize: 15 }}>Avisos</strong>
-            {unread > 0 && (
-              <button
-                type="button"
-                onClick={markAllRead}
-                style={{
-                  border: 'none',
-                  background: 'transparent',
-                  color: panelFg,
-                  textDecoration: 'underline',
-                  cursor: 'pointer',
-                  fontSize: 12,
-                  fontFamily: 'inherit',
-                }}
-              >
-                Marcar leídos
-              </button>
-            )}
+            <span style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              {unread > 0 && (
+                <button
+                  type="button"
+                  onClick={markAllRead}
+                  style={{
+                    border: 'none',
+                    background: 'transparent',
+                    color: panelFg,
+                    textDecoration: 'underline',
+                    cursor: 'pointer',
+                    fontSize: 12,
+                    fontFamily: 'inherit',
+                    padding: 0,
+                  }}
+                >
+                  Marcar leídos
+                </button>
+              )}
+              {notifs.length > 0 && (
+                <button
+                  type="button"
+                  onClick={deleteAll}
+                  style={{
+                    border: '1px solid #c0392b',
+                    background: 'transparent',
+                    color: '#c0392b',
+                    borderRadius: 999,
+                    cursor: 'pointer',
+                    fontSize: 11,
+                    fontWeight: 700,
+                    fontFamily: 'inherit',
+                    padding: '3px 8px',
+                  }}
+                >
+                  Borrar todas
+                </button>
+              )}
+            </span>
           </div>
           {notifs.length === 0 && (
             <p style={{ margin: 0, opacity: 0.75, textAlign: 'center', padding: 16 }}>
@@ -561,48 +619,87 @@ export default function ProfileButton() {
             </p>
           )}
           {notifs.map((n) => (
-            <button
+            <div
               key={n.id}
-              type="button"
-              onClick={() => openNoti(n)}
               style={{
                 display: 'flex',
-                gap: 10,
+                gap: 8,
                 width: '100%',
                 textAlign: 'left',
-                padding: 10,
+                padding: '8px 6px 8px 10px',
                 marginBottom: 6,
                 borderRadius: 8,
                 border: n.read ? '1px solid transparent' : '1px solid #FFD700',
                 background: n.read ? 'transparent' : 'rgba(255,215,0,0.12)',
-                cursor: 'pointer',
                 color: panelFg,
                 fontFamily: 'inherit',
+                alignItems: 'flex-start',
+                boxSizing: 'border-box',
               }}
             >
-              {n.image_url ? (
-                <img
-                  src={n.image_url}
-                  alt=""
-                  style={{
-                    width: 40,
-                    height: 40,
-                    borderRadius: 8,
-                    objectFit: 'cover',
-                    flexShrink: 0,
-                  }}
-                />
-              ) : (
-                <span style={{ fontSize: 22, width: 40, textAlign: 'center' }}>📌</span>
-              )}
-              <span style={{ flex: 1, minWidth: 0 }}>
-                <strong style={{ display: 'block', fontSize: 13 }}>{n.title}</strong>
-                <span style={{ fontSize: 12, opacity: 0.85, display: 'block' }}>{n.body}</span>
-                <span style={{ fontSize: 11, opacity: 0.6 }}>
-                  {new Date(n.created_at).toLocaleString('es-ES')}
+              <button
+                type="button"
+                onClick={() => openNoti(n)}
+                style={{
+                  display: 'flex',
+                  gap: 10,
+                  flex: 1,
+                  minWidth: 0,
+                  textAlign: 'left',
+                  padding: 0,
+                  border: 'none',
+                  background: 'transparent',
+                  cursor: 'pointer',
+                  color: 'inherit',
+                  fontFamily: 'inherit',
+                }}
+              >
+                {n.image_url ? (
+                  <img
+                    src={n.image_url}
+                    alt=""
+                    style={{
+                      width: 40,
+                      height: 40,
+                      borderRadius: 8,
+                      objectFit: 'cover',
+                      flexShrink: 0,
+                    }}
+                  />
+                ) : (
+                  <span style={{ fontSize: 22, width: 40, textAlign: 'center' }}>📌</span>
+                )}
+                <span style={{ flex: 1, minWidth: 0 }}>
+                  <strong style={{ display: 'block', fontSize: 13 }}>{n.title}</strong>
+                  <span style={{ fontSize: 12, opacity: 0.85, display: 'block' }}>{n.body}</span>
+                  <span style={{ fontSize: 11, opacity: 0.6 }}>
+                    {new Date(n.created_at).toLocaleString('es-ES')}
+                  </span>
                 </span>
-              </span>
-            </button>
+              </button>
+              <button
+                type="button"
+                className="noti-x"
+                aria-label="Eliminar aviso"
+                onClick={() => deleteNoti(n.id)}
+                style={{
+                  width: 22,
+                  height: 22,
+                  borderRadius: 999,
+                  border: 'none',
+                  background: 'rgba(128,128,128,0.18)',
+                  color: panelFg,
+                  cursor: 'pointer',
+                  fontSize: 12,
+                  fontWeight: 700,
+                  lineHeight: 1,
+                  flexShrink: 0,
+                  fontFamily: 'inherit',
+                }}
+              >
+                ×
+              </button>
+            </div>
           ))}
         </div>
       )}

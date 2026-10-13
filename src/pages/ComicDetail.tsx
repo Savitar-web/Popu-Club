@@ -95,7 +95,7 @@ export default function ComicDetail() {
         data: { user },
       } = await supabase.auth.getUser()
 
-      const comicRes = await withTimeout(
+      const comicRes = await withTimeout<{ data: Comic | null; error: { message: string } | null }>(
         supabase
           .from('comics')
           .select('id, title, description, cover_url, banner_url, genre, status, created_at')
@@ -111,7 +111,7 @@ export default function ComicDetail() {
       }
       setComic(comicData as Comic)
 
-      const chRes = await withTimeout(
+      const chRes = await withTimeout<{ data: Chapter[] | null; error: { message: string } | null }>(
         supabase
           .from('chapters')
           .select('id, comic_id, number, title, status, published_at, icon_url')
@@ -177,7 +177,7 @@ export default function ComicDetail() {
       void (async () => {
         for (const ch of enriched) {
           try {
-            const { data } = await withTimeout(
+            const pageRes = await withTimeout<{ data: { image_url: string }[] | null }>(
               supabase!
                 .from('pages')
                 .select('image_url')
@@ -185,6 +185,7 @@ export default function ComicDetail() {
                 .order('page_number', { ascending: true }),
               8000
             )
+            const data = pageRes.data
             const urls = ((data as { image_url: string }[]) || []).map((x) => x.image_url)
             if (urls.length) {
               cacheSet('pages_' + ch.id, urls)
