@@ -1,3 +1,4 @@
+import { logout } from '../lib/auth'
 import { useState, useEffect, useCallback, FormEvent } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import Header from '../components/Header'
@@ -78,7 +79,8 @@ export default function Profile() {
         return
       }
 
-      const { data: { user: authUser } } = await supabase.auth.getUser()
+      const { data: { session: authSession } } = await supabase.auth.getSession()
+      const authUser = authSession?.user
       if (!authUser) { navigate('/login'); return }
 
       const { data: profile } = await supabase.from('profiles').select('*').eq('id', authUser.id).single()
@@ -148,12 +150,10 @@ export default function Profile() {
         .order('created_at', { ascending: true })
       setFolders(fd || [])
       const items: Record<string, any[]> = {}
-      for (const f of fd || []) {
-        const { data: it } = await supabase
-          .from('favorite_items')
-          .select('id, comic_id, comics(id, title, cover_url)')
-          .eq('folder_id', f.id)
-        items[f.id] = it || []
+      if (fd?.length) {
+        const { data: allItems } = await supabase.from('favorite_items')
+          .select('id, folder_id, comic_id, comics(id, title, cover_url)').in('folder_id', fd.map((f: any) => f.id))
+        for (const folder of fd) items[folder.id] = (allItems || []).filter((item: any) => item.folder_id === folder.id)
       }
       setFolderItems(items)
 
@@ -296,10 +296,9 @@ export default function Profile() {
   }
 
   const handleLogout = async () => {
-    if (supabase) await supabase.auth.signOut()
-    ;['currentUser', 'username', 'email', 'age', 'profilePic', 'role'].forEach((k) => localStorage.removeItem(k))
-    window.dispatchEvent(new Event('profileUpdated'))
-    window.location.assign('/login')
+    try { await logout() } catch { /* local logout still completes offline */ }
+    // Reload clears the SDK's in-memory session even when the network is unavailable.
+    window.location.assign(/electron|capacitor/i.test(navigator.userAgent) || (window as any).Capacitor ? '/#/login' : '/login')
   }
 
   const postWall = async (e: FormEvent) => {

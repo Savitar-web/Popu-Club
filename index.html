@@ -40,12 +40,15 @@
     <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-9038529337387769"
      crossorigin="anonymous"></script>
 
+    <script>
+      try { document.documentElement.dataset.theme = localStorage.getItem('theme') === 'dark' ? 'dark' : 'light' } catch {}
+    </script>
     <style>
       html, body, #root {
         margin: 0;
         padding: 0;
         min-height: 100%;
-        background: #111;
+        background: var(--bg, #cecece);
       }
       html, body, #root, #root * {
         -webkit-user-select: none;

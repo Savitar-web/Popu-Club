@@ -1,4 +1,6 @@
-import { useEffect, useMemo, useState, FormEvent } from 'react'
+import { readAll } from '../lib/data'
+import { hasSession, useAuth } from '../lib/auth'
+import { useEffect, useMemo, useState, useRef, FormEvent } from 'react'
 import { Link, useParams, useNavigate } from 'react-router-dom'
 import Header from '../components/Header'
 import Footer from '../components/Footer'
@@ -33,7 +35,7 @@ type Comment = {
 }
 
 function isGuestUser() {
-  return localStorage.getItem('guestMode') === 'true' || !localStorage.getItem('currentUser')
+  return !hasSession()
 }
 
 function Heart({ filled }: { filled: boolean }) {
@@ -53,6 +55,9 @@ function Heart({ filled }: { filled: boolean }) {
 export default function ChapterReader() {
   const { comicId, chapterId } = useParams()
   const navigate = useNavigate()
+  const lastVisit = useRef<string | null>(null)
+  const loadVersion = useRef(0)
+  const { session } = useAuth()
   const [comic, setComic] = useState<Comic | null>(null)
   const [chapter, setChapter] = useState<Chapter | null>(null)
   const [allChapters, setAllChapters] = useState<Chapter[]>([])
@@ -79,12 +84,16 @@ export default function ChapterReader() {
   const [pageNow, setPageNow] = useState(1)
 
   useEffect(() => {
-    if (comicId && chapterId) load(comicId, chapterId)
-  }, [comicId, chapterId])
+    if (comicId && chapterId) void load(comicId, chapterId)
+    return () => { loadVersion.current++ }
+  }, [comicId, chapterId, session?.user.id])
 
   useEffect(() => {
-    if (chapterId) trackChapterView(chapterId)
-  }, [chapterId])
+    if (chapterId && lastVisit.current !== chapterId) {
+      lastVisit.current = chapterId
+      void trackChapterView(chapterId, session?.user.id || null)
+    }
+  }, [chapterId, session?.user.id])
 
   useEffect(() => {
     flushPendingViews()
@@ -132,7 +141,8 @@ export default function ChapterReader() {
     navigate('/login')
   }
 
-  const load = async (cId: string, chId: string) => {
+  async function load(cId: string, chId: string) {
+    const version = ++loadVersion.current
     const cached = cacheGet<{
       comic: Comic | null
       chapter: Chapter | null
@@ -150,6 +160,7 @@ export default function ChapterReader() {
         }))
       )
       const icon = await localImage(cached.chapter?.icon_url)
+      if (version !== loadVersion.current) return
       setComic(cached.comic)
       setChapter(cached.chapter ? { ...cached.chapter, icon_url: icon || cached.chapter.icon_url } : null)
       setAllChapters(cached.allChapters)
@@ -166,7 +177,7 @@ export default function ChapterReader() {
       setPages(extraLocal)
       setComments(cached.comments)
       setLikeCount(cached.likeCount)
-      setLiked(cached.liked)
+      setLiked(false)
       setLoading(false)
     } else {
       setLoading(true)
@@ -179,61 +190,24 @@ export default function ChapterReader() {
       return
     }
     try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser()
-      setMyId(user?.id || null)
-
-      const comicRes = await withTimeout<{ data: Comic | null; error: { message: string } | null }>(
-        supabase.from('comics').select('id, title, is_finished, status').eq('id', cId).single()
-      )
+      const user = session?.user
+      const [comicRes, listRes, chRes, pgRes] = await Promise.all([
+        withTimeout<any>(supabase.from('comics').select('id, title, is_finished, status').eq('id', cId).single()),
+        withTimeout<any>(supabase.from('chapters').select('id, comic_id, number, title, status, icon_url').eq('comic_id', cId).eq('status', 'published').order('number')),
+        withTimeout<any>(supabase.from('chapters').select('id, comic_id, number, title, status, icon_url').eq('id', chId).single()),
+        withTimeout<any>(supabase.from('pages').select('id, image_url, page_number').eq('chapter_id', chId).order('page_number')),
+      ])
+      if (version !== loadVersion.current) return
+      for (const response of [comicRes, listRes, chRes, pgRes]) if (response.error) throw response.error
       const comicData = comicRes.data
-      setComic(comicData as Comic)
-
-      const listRes = await withTimeout<{ data: Chapter[] | null; error: { message: string } | null }>(
-        supabase
-          .from('chapters')
-          .select('id, comic_id, number, title, status, icon_url')
-          .eq('comic_id', cId)
-          .eq('status', 'published')
-          .order('number', { ascending: true })
-      )
       const chList = listRes.data
-      setAllChapters((chList as Chapter[]) || [])
-
-      const chRes = await withTimeout<{ data: Chapter | null; error: { message: string } | null }>(
-        supabase
-          .from('chapters')
-          .select('id, comic_id, number, title, status, icon_url')
-          .eq('id', chId)
-          .single()
-      )
       const ch = chRes.data
-      setChapter(ch as Chapter)
-
-      const pgRes = await withTimeout<{ data: Page[] | null; error: { message: string } | null }>(
-        supabase
-          .from('pages')
-          .select('id, image_url, page_number')
-          .eq('chapter_id', chId)
-          .order('page_number', { ascending: true })
-      )
       const pgs = pgRes.data
-      setPages((pgs as Page[]) || [])
-
-      try {
-        await supabase.from('chapter_views').insert({
-          chapter_id: chId,
-          user_id: user?.id || null,
-        })
-        if (cId) {
-          await supabase.rpc('bump_daily_stat', {
-            p_comic_id: cId,
-            p_chapter_id: chId,
-            p_field: 'views',
-          })
-        }
-      } catch (_) {}
+      setMyId(user?.id || null)
+      setComic(comicData)
+      setAllChapters(chList || [])
+      setChapter(ch)
+      setPages(pgs || [])
 
       const { count, error: cntErr } = await supabase
         .from('likes')
@@ -269,28 +243,14 @@ export default function ChapterReader() {
       list.forEach((c) => {
         byId[c.id] = c
       })
-      const withLikes: Comment[] = []
-      for (const c of list) {
-        const { count: lc } = await supabase
-          .from('comment_likes')
-          .select('*', { count: 'exact', head: true })
-          .eq('comment_id', c.id)
-        let liked_by_me = false
-        if (user) {
-          const { data: ml } = await supabase
-            .from('comment_likes')
-            .select('id')
-            .eq('comment_id', c.id)
-            .eq('user_id', user.id)
-            .maybeSingle()
-          liked_by_me = !!ml
-        }
-        let reply_to_username: string | null = null
-        if (c.parent_id && byId[c.parent_id]?.profiles?.username) {
-          reply_to_username = byId[c.parent_id].profiles.username
-        }
-        withLikes.push({ ...c, like_count: lc || 0, liked_by_me, reply_to_username })
-      }
+      const commentLikes = list.length ? await readAll<any>('comment_likes', 'id, comment_id, user_id', (q) => q.in('comment_id', list.map((c) => c.id))) : []
+      const withLikes: Comment[] = list.map((c) => ({
+        ...c,
+        like_count: commentLikes.filter((like) => like.comment_id === c.id).length,
+        liked_by_me: commentLikes.some((like) => like.comment_id === c.id && like.user_id === user?.id),
+        reply_to_username: c.parent_id ? byId[c.parent_id]?.profiles?.username || null : null,
+      }))
+      if (version !== loadVersion.current) return
       setComments(withLikes)
       cacheSet('chapter_' + chId, {
         comic: comicData as Comic,
@@ -309,9 +269,9 @@ export default function ChapterReader() {
       ])
       void saveImages(pageUrls)
     } catch (e: any) {
-      if (!cached) setError(e?.message || 'Error')
+      if (version === loadVersion.current && !cached) setError(e?.message || 'Error')
     } finally {
-      setLoading(false)
+      if (version === loadVersion.current) setLoading(false)
     }
   }
 
@@ -400,7 +360,8 @@ export default function ChapterReader() {
       return
     }
     if (c.liked_by_me) {
-      await supabase.from('comment_likes').delete().eq('comment_id', c.id).eq('user_id', user.id)
+      const { error } = await supabase.from('comment_likes').delete().eq('comment_id', c.id).eq('user_id', user.id)
+      if (error) { setError(error.message); return }
       setComments((prevList) =>
         prevList.map((x) =>
           x.id === c.id
@@ -483,7 +444,7 @@ export default function ChapterReader() {
               chapterId,
               comicId,
             })
-          } catch (_) {}
+          } catch {}
         }
         try {
           if (comicId) {
@@ -493,7 +454,7 @@ export default function ChapterReader() {
               p_field: 'comments',
             })
           }
-        } catch (_) {}
+        } catch {}
         setComments((prevList) => [
           ...prevList,
           {
@@ -545,7 +506,7 @@ export default function ChapterReader() {
     document.getElementById('comentarios')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }
 
-  const NavBar = ({ sticky }: { sticky?: boolean }) => (
+  const renderNavBar = (sticky = false) => (
     <div className={`nav-btns ${sticky ? 'nav-sticky' : ''}`}>
       <Link className="nav-btn" to={`/comic/${comicId}`}>
         Lista
@@ -798,19 +759,19 @@ export default function ChapterReader() {
           )}
         </div>
 
-        <NavBar />
+        {renderNavBar()}
         {error && <div className="err">{error}</div>}
 
         <div className="pages-strip">
           {pages.map((p) => (
-            <img key={p.id} src={p.image_url} alt={`Página ${p.page_number}`} draggable={false} />
+            <img key={p.id} src={p.image_url} alt={`Página ${p.page_number}`} loading={p.page_number > 2 ? "lazy" : "eager"} decoding="async" draggable={false} />
           ))}
           {pages.length === 0 && (
             <p style={{ color: '#aaa', textAlign: 'center', padding: 40 }}>Sin páginas todavía.</p>
           )}
         </div>
 
-        <NavBar />
+        {renderNavBar()}
 
         {isLast && (
           <div className="end-box">

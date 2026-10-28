@@ -1,18 +1,25 @@
 /** Guarda las imágenes de las páginas en IndexedDB para leer sin internet. */
 const DB = 'popu-images'
 const STORE = 'blobs'
+let connection: Promise<IDBDatabase> | null = null
+const objectUrls = new Map<string, string>()
 
 function openDb(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
+  if (connection) return connection
+  connection = new Promise((resolve, reject) => {
     const req = indexedDB.open(DB, 1)
     req.onupgradeneeded = () => {
       if (!req.result.objectStoreNames.contains(STORE)) {
         req.result.createObjectStore(STORE)
       }
     }
-    req.onsuccess = () => resolve(req.result)
-    req.onerror = () => reject(req.error)
+    req.onsuccess = () => {
+      req.result.onversionchange = () => { req.result.close(); connection = null }
+      resolve(req.result)
+    }
+    req.onerror = () => { connection = null; reject(req.error) }
   })
+  return connection
 }
 
 export async function saveImages(urls: (string | null | undefined)[]) {
@@ -50,6 +57,7 @@ export async function saveImages(urls: (string | null | undefined)[]) {
 
 export async function localImage(url: string | null | undefined): Promise<string> {
   if (!url) return ''
+  if (objectUrls.has(url)) return objectUrls.get(url)!
   try {
     const db = await openDb()
     const blob = await new Promise<Blob | undefined>((resolve) => {
@@ -58,7 +66,11 @@ export async function localImage(url: string | null | undefined): Promise<string
       r.onsuccess = () => resolve(r.result as Blob | undefined)
       r.onerror = () => resolve(undefined)
     })
-    if (blob) return URL.createObjectURL(blob)
+    if (blob) {
+      const objectUrl = URL.createObjectURL(blob)
+      objectUrls.set(url, objectUrl)
+      return objectUrl
+    }
   } catch {
     /* ignore */
   }
