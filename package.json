@@ -11,9 +11,10 @@
     "build": "vite build",
     "lint": "oxlint",
     "preview": "vite preview",
-    "electron:build": "npm run build && electron-builder --win portable nsis",
-    "electron:build:linux": "npm run build && electron-builder --linux AppImage",
-    "electron:build:mac": "npm run build && electron-builder --mac dmg",
+    "electron:prepare": "node scripts/prepare-electron.mjs",
+    "electron:build": "npm run build && npm run electron:prepare && node scripts/build-electron.mjs --win",
+    "electron:build:linux": "npm run build && npm run electron:prepare && node scripts/build-electron.mjs --linux",
+    "electron:build:mac": "npm run build && npm run electron:prepare && node scripts/build-electron.mjs --mac",
     "test": "node --test tests/*.test.mjs"
   },
   "dependencies": {
@@ -45,11 +46,13 @@
     "productName": "Popu-Club",
     "electronDist": "node_modules/electron/dist",
     "directories": {
+      "app": "build/desktop",
       "output": "electron-dist/${version}"
     },
     "files": [
       "dist/**/*",
-      "electron/**/*"
+      "electron/**/*",
+      "build/icon.png"
     ],
     "icon": "build/icon.png",
     "win": {

@@ -10,3 +10,5 @@ node_modules
 work
 tests
 outputs
+
+build/desktop

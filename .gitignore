@@ -51,3 +51,6 @@ dist-ssr
 *.keystore
 
 .env*
+
+/build/desktop/
+!.env.example
