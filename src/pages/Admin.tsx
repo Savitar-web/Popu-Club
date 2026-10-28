@@ -1,4 +1,8 @@
-import { useEffect, useState, FormEvent, DragEvent } from 'react'
+import { useAuth } from '../lib/auth'
+import { readAll, chapterCounts } from '../lib/data'
+import { dayKey, dayRange, moveItem } from '../lib/metrics'
+import { persistOrder } from '../lib/reorder'
+import { useEffect, useState, useRef, FormEvent, DragEvent } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import Header from '../components/Header'
 import Footer from '../components/Footer'
@@ -116,6 +120,11 @@ type DailyRow = {
 
 export default function Admin() {
   const navigate = useNavigate()
+  const { session } = useAuth()
+  const orderLock = useRef(false)
+  const [orderSaving, setOrderSaving] = useState(false)
+  const dailyRequest = useRef(0)
+  const [statsLoading, setStatsLoading] = useState(false)
   const [loading, setLoading] = useState(true)
   const [allowed, setAllowed] = useState(false)
   const [tab, setTab] = useState<
@@ -193,6 +202,8 @@ export default function Admin() {
 
   useEffect(() => {
     let cancelled = false
+    setAllowed(false)
+    setLoading(true)
     ;(async () => {
       if (!isSupabaseConfigured || !supabase) {
         setError('Supabase no configurado')
@@ -200,7 +211,11 @@ export default function Admin() {
         return
       }
       // Comprobación rápida: no esperamos plantillas ni comics para desbloquear UI
-      const ok = await isAdmin()
+      let ok = false
+      try { ok = await isAdmin() } catch {
+        if (!cancelled) { setError('No se pudo verificar la sesión. Comprueba tu conexión.'); setLoading(false) }
+        return
+      }
       if (cancelled) return
       if (!ok) {
         setError('restricted')
@@ -225,7 +240,7 @@ export default function Admin() {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [session?.user.id])
 
   useEffect(() => {
     if (!allowed) return
@@ -238,8 +253,11 @@ export default function Admin() {
     if (tab === 'stats') {
       loadAccessLogs()
       loadStats()
-      loadDailyStats()
     }
+  }, [tab, allowed])
+
+  useEffect(() => {
+    if (allowed && tab === 'stats') void loadDailyStats()
   }, [tab, allowed, statsRange])
 
   useEffect(() => {
@@ -263,7 +281,7 @@ export default function Admin() {
     })()
   }, [blastComicId])
 
-  const loadUsers = async () => {
+  async function loadUsers() {
     if (!supabase) return
     const { data, error: err } = await supabase
       .from('profiles')
@@ -274,7 +292,7 @@ export default function Admin() {
     setUsers(data || [])
   }
 
-  const loadAccessLogs = async () => {
+  async function loadAccessLogs() {
     if (!supabase) return
     const { data } = await supabase
       .from('admin_access_log')
@@ -284,102 +302,68 @@ export default function Admin() {
     setAccessLogs(data || [])
   }
 
-  const loadStats = async () => {
+  async function loadStats() {
     if (!supabase) return
+    setStatsLoading(true)
     try {
-      const [vRes, lRes, cRes] = await Promise.all([
-        supabase.from('chapter_views').select('*', { count: 'exact', head: true }),
-        supabase.from('likes').select('*', { count: 'exact', head: true }),
-        supabase.from('comments').select('*', { count: 'exact', head: true }),
+      const [counts, comicsList, allCh] = await Promise.all([
+        chapterCounts(), readAll<any>('comics', 'id, title'),
+        readAll<any>('chapters', 'id, title, number, comic_id, created_at'),
       ])
-      setStats({
-        views: vRes.count || 0,
-        likes: lRes.count || 0,
-        comments: cRes.count || 0,
+      const sum = (values: Record<string, number>) => Object.values(values).reduce((a, b) => a + b, 0)
+      setStats({ views: sum(counts.views), likes: sum(counts.likes), comments: sum(counts.comments) })
+      const totalsFor = (ids: string[]) => ({
+        views: ids.reduce((n, id) => n + (counts.views[id] || 0), 0),
+        likes: ids.reduce((n, id) => n + (counts.likes[id] || 0), 0),
+        comments: ids.reduce((n, id) => n + (counts.comments[id] || 0), 0),
       })
-      const { data: comicsList } = await supabase.from('comics').select('id, title').order('title')
-      const cStats: any[] = []
-      for (const c of comicsList || []) {
-        const { data: chs } = await supabase.from('chapters').select('id').eq('comic_id', c.id)
-        const ids = (chs || []).map((x: any) => x.id)
-        let views = 0,
-          likes = 0,
-          commentsN = 0
-        if (ids.length) {
-          const [vr, lr, cr] = await Promise.all([
-            supabase.from('chapter_views').select('*', { count: 'exact', head: true }).in('chapter_id', ids),
-            supabase.from('likes').select('*', { count: 'exact', head: true }).in('chapter_id', ids),
-            supabase.from('comments').select('*', { count: 'exact', head: true }).in('chapter_id', ids),
-          ])
-          views = vr.count || 0
-          likes = lr.count || 0
-          commentsN = cr.count || 0
-        }
-        cStats.push({ id: c.id, title: c.title, views, likes, comments: commentsN, chapters: ids.length })
-      }
-      setComicStats(cStats)
-      const { data: allCh } = await supabase
-        .from('chapters')
-        .select('id, title, number, comic_id')
-        .order('created_at', { ascending: false })
-        .limit(40)
-      const chStats: any[] = []
-      for (const ch of allCh || []) {
-        const [vr, lr, cr] = await Promise.all([
-          supabase.from('chapter_views').select('*', { count: 'exact', head: true }).eq('chapter_id', ch.id),
-          supabase.from('likes').select('*', { count: 'exact', head: true }).eq('chapter_id', ch.id),
-          supabase.from('comments').select('*', { count: 'exact', head: true }).eq('chapter_id', ch.id),
-        ])
-        const comicTitle =
-          comicsList?.find((c: any) => c.id === ch.comic_id)?.title ||
-          comics.find((c) => c.id === ch.comic_id)?.title ||
-          ''
-        chStats.push({
-          id: ch.id,
-          title: ch.title,
-          number: ch.number,
-          comic: comicTitle,
-          views: vr.count || 0,
-          likes: lr.count || 0,
-          comments: cr.count || 0,
-        })
-      }
-      setChapterStats(chStats)
-    } catch (e) {
-      console.warn(e)
-    }
+      setComicStats(comicsList.map((c) => {
+        const ids = allCh.filter((ch) => ch.comic_id === c.id).map((ch) => ch.id)
+        return { ...c, ...totalsFor(ids), chapters: ids.length }
+      }))
+      setChapterStats(allCh.sort((a, b) => b.created_at.localeCompare(a.created_at)).slice(0, 40).map((ch) => ({
+        ...ch, ...totalsFor([ch.id]), comic: comicsList.find((c) => c.id === ch.comic_id)?.title || '',
+      })))
+    } catch (err: any) { setError('Estadísticas: ' + err.message) }
+    finally { setStatsLoading(false) }
   }
 
-  const loadDailyStats = async () => {
+  async function loadDailyStats() {
     if (!supabase) return
-    const from = new Date()
-    from.setDate(from.getDate() - statsRange)
-    const fromStr = from.toISOString().slice(0, 10)
-    const { data } = await supabase
-      .from('daily_stats')
-      .select('day, comic_id, chapter_id, views, likes, comments')
-      .gte('day', fromStr)
-      .order('day', { ascending: false })
-      .limit(500)
-    setDailyStats((data as any) || [])
-
-    // Agregar por día
-    const map: Record<string, { views: number; likes: number; comments: number }> = {}
-    for (const row of data || []) {
-      const d = row.day
-      if (!map[d]) map[d] = { views: 0, likes: 0, comments: 0 }
-      map[d].views += row.views || 0
-      map[d].likes += row.likes || 0
-      map[d].comments += row.comments || 0
-    }
-    setDailyGlobal(
-      Object.entries(map)
-        .map(([day, v]) => ({ day, ...v }))
-        .sort((a, b) => b.day.localeCompare(a.day))
-    )
+    const request = ++dailyRequest.current
+    const days = dayRange(statsRange)
+    const from = new Date(days[0].day + 'T00:00:00').toISOString()
+    const until = new Date()
+    until.setHours(24, 0, 0, 0)
+    try {
+      const [views, likes, commentsRows, chapterRows] = await Promise.all([
+        ...['chapter_views', 'likes', 'comments'].map((table) => readAll<any>(table, 'id, chapter_id, created_at',
+          (q) => q.gte('created_at', from).lt('created_at', until.toISOString()))),
+        readAll<any>('chapters', 'id, comic_id, title, number'),
+      ])
+      if (request !== dailyRequest.current) return
+      const global = new Map(days.map((d) => [d.day, d]))
+      const detail = new Map<string, DailyRow>()
+      for (const [index, records] of [views, likes, commentsRows].entries()) {
+        const field = (['views', 'likes', 'comments'] as const)[index]
+        for (const row of records) {
+          const day = dayKey(new Date(row.created_at))
+          const daily = global.get(day)
+          if (!daily) continue
+          daily[field]++
+          const key = day + ':' + row.chapter_id
+          if (!detail.has(key)) detail.set(key, { day, chapter_id: row.chapter_id,
+            comic_id: chapterRows.find((ch: any) => ch.id === row.chapter_id)?.comic_id || '',
+            chapters: chapterRows.find((ch: any) => ch.id === row.chapter_id), views: 0, likes: 0, comments: 0 })
+          detail.get(key)![field]++
+        }
+      }
+      setDailyGlobal([...global.values()].reverse())
+      setDailyStats([...detail.values()].sort((a, b) => b.day.localeCompare(a.day)))
+    } catch (err: any) { if (request === dailyRequest.current) setError('Actividad diaria: ' + err.message) }
   }
 
-  const loadComics = async () => {
+  async function loadComics() {
     if (!supabase) return
     const { data, error: err } = await supabase
       .from('comics')
@@ -389,7 +373,7 @@ export default function Admin() {
     else setComics((data as Comic[]) || [])
   }
 
-  const loadChapters = async (comicId: string) => {
+  async function loadChapters(comicId: string) {
     if (!supabase) return
     const { data } = await supabase
       .from('chapters')
@@ -404,7 +388,7 @@ export default function Admin() {
     } else if (!editChapterId) setChNumber(1)
   }
 
-  const loadComments = async () => {
+  async function loadComments() {
     if (!supabase) return
     const { data, error: err } = await supabase
       .from('comments')
@@ -419,7 +403,7 @@ export default function Admin() {
     else setComments((data as any) || [])
   }
 
-  const loadSlider = async () => {
+  async function loadSlider() {
     if (!supabase) return
     const { data: settings } = await supabase
       .from('site_settings')
@@ -575,106 +559,50 @@ export default function Admin() {
     })
   }
 
-  const onComicDrop = async (targetId: string) => {
-    if (!supabase || !dragComicId || dragComicId === targetId) return
-    const list = [...comics].sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
-    const from = list.findIndex((c) => c.id === dragComicId)
-    const to = list.findIndex((c) => c.id === targetId)
-    if (from < 0 || to < 0) return
-    const [item] = list.splice(from, 1)
-    list.splice(to, 0, item)
-    setDragComicId(null)
-    const next = list.map((c, i) => ({ ...c, sort_order: i }))
-    setComics(next)
-    await Promise.all(next.map((c, i) => supabase.from('comics').update({ sort_order: i }).eq('id', c.id)))
-    setMessage('Orden de Inicio / Principales actualizado')
+  const recentList = [...comics].sort((a, b) => (a.recent_order ?? 0) - (b.recent_order ?? 0) || (b.created_at || '').localeCompare(a.created_at || ''))
+
+  async function saveOrder(table: string, field: string, before: any[], ordered: any[], apply: (items: any[]) => void, start = 0) {
+    if (orderLock.current || !supabase) return
+    orderLock.current = true
+    setOrderSaving(true)
+    setError('')
+    setMessage('')
+    const after = ordered.map((item, i) => ({ ...item, [field]: i + start }))
+    apply(after)
+    try {
+      await persistOrder(table, field, before, after)
+      setMessage('Orden guardado')
+    } catch (err: any) {
+      apply(before)
+      setError('No se pudo guardar el orden: ' + err.message)
+      if (table === 'comics') await loadComics()
+      if (table === 'pages' && manageChapterId) await loadChapterPages(manageChapterId)
+      if (table === 'slider_images') await loadSlider()
+    } finally { orderLock.current = false; setOrderSaving(false) }
   }
 
-  const recentList = [...comics].sort((a, b) => {
-    const ra = a.recent_order ?? 0
-    const rb = b.recent_order ?? 0
-    if (ra !== rb) return ra - rb
-    return (b.created_at || '').localeCompare(a.created_at || '')
-  })
-
-  const onRecentDrop = async (targetId: string) => {
-    if (!supabase || !dragRecentId || dragRecentId === targetId) return
-    const list = [...recentList]
-    const from = list.findIndex((c) => c.id === dragRecentId)
-    const to = list.findIndex((c) => c.id === targetId)
-    if (from < 0 || to < 0) return
-    const [item] = list.splice(from, 1)
-    list.splice(to, 0, item)
-    setDragRecentId(null)
-    const next = list.map((c, i) => ({ ...c, recent_order: i + 1 }))
-    setComics((prev) =>
-      prev.map((c) => {
-        const n = next.find((x) => x.id === c.id)
-        return n ? { ...c, recent_order: n.recent_order } : c
-      })
-    )
-    await Promise.all(next.map((c, i) => supabase.from('comics').update({ recent_order: i + 1 }).eq('id', c.id)))
-    setMessage('Orden de Recientes actualizado')
+  function moveTarget(list: any[], id: string, dir: number) {
+    return list[list.findIndex((item) => item.id === id) + dir]?.id || id
   }
-
-  const moveComic = async (id: string, dir: -1 | 1) => {
-    if (!supabase) return
-    const list = [...comics].sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
-    const i = list.findIndex((c) => c.id === id)
-    const j = i + dir
-    if (i < 0 || j < 0 || j >= list.length) return
-    const next = [...list]
-    ;[next[i], next[j]] = [next[j], next[i]]
-    const ordered = next.map((c, idx) => ({ ...c, sort_order: idx }))
-    setComics(ordered)
-    await Promise.all(ordered.map((c, idx) => supabase.from('comics').update({ sort_order: idx }).eq('id', c.id)))
-    setMessage('Orden actualizado')
+  function orderComics(id: string, target: string) {
+    const before = [...comics].sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
+    return saveOrder('comics', 'sort_order', before, moveItem(before, id, target), setComics)
   }
-
-  const moveRecent = async (id: string, dir: -1 | 1) => {
-    if (!supabase) return
-    const list = [...recentList]
-    const i = list.findIndex((c) => c.id === id)
-    const j = i + dir
-    if (i < 0 || j < 0 || j >= list.length) return
-    const next = [...list]
-    ;[next[i], next[j]] = [next[j], next[i]]
-    const ordered = next.map((c, idx) => ({ ...c, recent_order: idx + 1 }))
-    setComics((prev) =>
-      prev.map((c) => {
-        const n = ordered.find((x) => x.id === c.id)
-        return n ? { ...c, recent_order: n.recent_order } : c
-      })
-    )
-    await Promise.all(ordered.map((c, idx) => supabase.from('comics').update({ recent_order: idx + 1 }).eq('id', c.id)))
-    setMessage('Recientes actualizado')
+  function orderRecent(id: string, target: string) {
+    return saveOrder('comics', 'recent_order', recentList, moveItem(recentList, id, target), setComics, 1)
   }
-
-  const moveSlide = async (id: string, dir: -1 | 1) => {
-    if (!supabase) return
-    const list = [...slides]
-    const i = list.findIndex((s) => s.id === id)
-    const j = i + dir
-    if (i < 0 || j < 0 || j >= list.length) return
-    const next = [...list]
-    ;[next[i], next[j]] = [next[j], next[i]]
-    const ordered = next.map((s, idx) => ({ ...s, sort_order: idx }))
-    setSlides(ordered)
-    await Promise.all(ordered.map((s, idx) => supabase.from('slider_images').update({ sort_order: idx }).eq('id', s.id)))
+  function orderSlides(id: string, target: string) {
+    return saveOrder('slider_images', 'sort_order', slides, moveItem(slides, id, target), setSlides)
   }
-
-  const movePage = async (id: string, dir: -1 | 1) => {
-    if (!supabase || !manageChapterId) return
-    const list = [...managePages]
-    const i = list.findIndex((pg) => pg.id === id)
-    const j = i + dir
-    if (i < 0 || j < 0 || j >= list.length) return
-    const next = [...list]
-    ;[next[i], next[j]] = [next[j], next[i]]
-    const ordered = next.map((pg, idx) => ({ ...pg, page_number: idx + 1 }))
-    setManagePages(ordered)
-    await Promise.all(ordered.map((pg, idx) => supabase.from('pages').update({ page_number: idx + 1 }).eq('id', pg.id)))
+  function orderPages(id: string, target: string) {
+    return saveOrder('pages', 'page_number', managePages, moveItem(managePages, id, target), setManagePages, 1)
   }
+  const onComicDrop = (target: string) => { if (dragComicId) void orderComics(dragComicId, target); setDragComicId(null) }
+  const onRecentDrop = (target: string) => { if (dragRecentId) void orderRecent(dragRecentId, target); setDragRecentId(null) }
+  const moveComic = (id: string, dir: number) => orderComics(id, moveTarget([...comics].sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0)), id, dir))
+  const moveRecent = (id: string, dir: number) => orderRecent(id, moveTarget(recentList, id, dir))
+  const moveSlide = (id: string, dir: number) => orderSlides(id, moveTarget(slides, id, dir))
+  const movePage = (id: string, dir: number) => orderPages(id, moveTarget(managePages, id, dir))
 
   const saveChapter = async (e: FormEvent) => {
     e.preventDefault()
@@ -825,18 +753,7 @@ export default function Admin() {
     })
   }
 
-  const onPageDrop = async (targetId: string) => {
-    if (!supabase || !manageChapterId || !dragPageId || dragPageId === targetId) return
-    const list = [...managePages]
-    const from = list.findIndex((p) => p.id === dragPageId)
-    const to = list.findIndex((p) => p.id === targetId)
-    if (from < 0 || to < 0) return
-    const [item] = list.splice(from, 1)
-    list.splice(to, 0, item)
-    setDragPageId(null)
-    setManagePages(list)
-    await Promise.all(list.map((p, i) => supabase.from('pages').update({ page_number: i + 1 }).eq('id', p.id)))
-  }
+  const onPageDrop = (target: string) => { if (dragPageId) void orderPages(dragPageId, target); setDragPageId(null) }
 
   const deletePage = (id: string) => {
     if (!supabase) return
@@ -904,18 +821,7 @@ export default function Admin() {
     }
   }
 
-  const onSlideDrop = async (targetId: string) => {
-    if (!supabase || !dragSlideId || dragSlideId === targetId) return
-    const list = [...slides]
-    const from = list.findIndex((s) => s.id === dragSlideId)
-    const to = list.findIndex((s) => s.id === targetId)
-    if (from < 0 || to < 0) return
-    const [item] = list.splice(from, 1)
-    list.splice(to, 0, item)
-    setDragSlideId(null)
-    setSlides(list)
-    await Promise.all(list.map((s, i) => supabase.from('slider_images').update({ sort_order: i }).eq('id', s.id)))
-  }
+  const onSlideDrop = (target: string) => { if (dragSlideId) void orderSlides(dragSlideId, target); setDragSlideId(null) }
 
   const deleteSlide = (id: string) => {
     if (!supabase) return
@@ -1340,12 +1246,35 @@ export default function Admin() {
           }
           .btn-yellow { width: 100%; }
         }
+
+        .admin-wrap[aria-busy="true"] .row-list { pointer-events: none; opacity: 0.7; }
+        .admin-wrap .row-list { min-width: 0; flex-wrap: wrap; }
+        .admin-wrap .row-list > div { min-width: 0; }
+        .admin-wrap .row-list strong { overflow-wrap: anywhere; }
+        .admin-wrap .admin-card { border: 1px solid color-mix(in srgb, var(--border) 25%, transparent); }
+        .admin-wrap .admin-card input:not([type="checkbox"]):not([type="file"]):not([type="range"]),
+        .admin-wrap .admin-card textarea, .admin-wrap .admin-card select {
+          background: var(--bg) !important; color: var(--text) !important; border-width: 2px !important;
+        }
+        .admin-wrap .admin-card input:focus-visible, .admin-wrap .admin-card textarea:focus-visible,
+        .admin-wrap .admin-card select:focus-visible { border-color: #d6b600 !important; outline: 2px solid #FFD700 !important; outline-offset: 2px; }
+        .admin-wrap .toggle-row label { margin: 0 !important; }
+        .admin-wrap .toggle-row .toggle { display: inline-block !important; flex-shrink: 0; }
+        .admin-wrap .order-arrows { display: flex; flex-shrink: 0; }
+        .admin-wrap button:focus-visible, .admin-wrap a:focus-visible { outline: 3px solid #FFD700; outline-offset: 3px; }
+        .admin-wrap button:disabled { cursor: wait; opacity: 0.6; }
+        .admin-wrap .day-bar .bars { min-width: 80px; }
+        @media (max-width: 520px) {
+          .admin-wrap .row-list > div:last-child { flex: 1 1 100%; }
+          .admin-wrap .day-bar > span { flex-basis: 100%; text-align: right; }
+        }
       `}</style>
 
       <Header />
       <ProfileButton />
 
-      <div className="admin-wrap">
+      <div className="admin-wrap" aria-busy={orderSaving}>
+        {orderSaving && <p role="status" className="msg">Guardando orden…</p>}
         <h1>Panel de administración</h1>
         <p style={{ color: 'var(--muted)' }}>Arcos, capítulos, orden, comentarios y estadísticas</p>
         {message && <div className="msg">{message}</div>}
@@ -1724,6 +1653,7 @@ export default function Admin() {
           <>
             <div className="admin-card">
               <h2>Totales</h2>
+              {statsLoading && <p role="status">Actualizando estadísticas…</p>}
               <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
                 <div className="stat-chip">
                   <div className="n">{stats.views}</div>
@@ -1752,14 +1682,13 @@ export default function Admin() {
                 <option value={90}>Últimos 90 días</option>
               </select>
               <p className="drag-hint" style={{ marginTop: 10 }}>
-                Amarillo = vistas · Rosa = likes · Azul = comentarios. Se alimenta con{' '}
-                
+                Amarillo = vistas · Rosa = likes · Azul = comentarios. Fechas en tu zona horaria. Los likes eliminados dejan de contar.
               </p>
               {dailyGlobal.length === 0 && (
-                <p className="drag-hint">Aún no hay filas en daily_stats. Aparecerán con el uso real.</p>
+                <p className="drag-hint">No hay actividad registrada en este período.</p>
               )}
               {dailyGlobal.map((d) => {
-                const max = Math.max(d.views + d.likes + d.comments, 1)
+                const max = Math.max(...dailyGlobal.map((day) => day.views + day.likes + day.comments), 1)
                 return (
                   <div key={d.day} className="day-bar">
                     <strong style={{ width: 100, flexShrink: 0 }}>{d.day}</strong>
@@ -1782,7 +1711,7 @@ export default function Admin() {
                 <div key={`${row.day}-${row.chapter_id}-${i}`} className="row-list">
                   <div style={{ flex: 1 }}>
                     <strong>
-                      Capítulo {row.chapter_id ? String(row.chapter_id).slice(0, 8) : '—'}
+                      {row.chapters ? `#${row.chapters.number} · ${row.chapters.title}` : 'Capítulo no disponible'}
                     </strong>
                     <div style={{ fontSize: 12, color: 'var(--muted)' }}>
                       {row.day} · {comics.find((c) => c.id === row.comic_id)?.title || 'Arco'}

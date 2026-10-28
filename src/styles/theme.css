@@ -3,9 +3,11 @@
   src: url('/Laffayette_Comic_Pro.woff') format('woff');
   font-weight: normal;
   font-style: normal;
+  font-display: swap;
 }
 
 :root {
+  color-scheme: light;
   --bg: #cecece;
   --text: #222222;
   --card: #ffffff;
@@ -18,6 +20,7 @@
 }
 
 [data-theme="dark"] {
+  color-scheme: dark;
   --bg: #1c1c1c;
   --text: #f2f2f2;
   --card: #2c2c2c;
@@ -41,3 +44,6 @@ html, body {
 * {
   box-sizing: border-box;
 }
+#root { background: var(--bg); min-height: 100vh; }
+/* Preserve the original dark canvas; the light canvas follows the prototype. */
+[data-theme="dark"] #root { background: #111; }

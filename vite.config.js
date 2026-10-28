@@ -43,19 +43,7 @@ export default defineConfig({
               cacheableResponse: { statuses: [0, 200] },
             },
           },
-          {
-            urlPattern: /^https:\/\/.*\.supabase\.co\/rest\/v1\/.*/i,
-            handler: 'NetworkFirst',
-            options: {
-              cacheName: 'supabase-api',
-              networkTimeoutSeconds: 8,
-              expiration: {
-                maxEntries: 80,
-                maxAgeSeconds: 60 * 60 * 24,
-              },
-              cacheableResponse: { statuses: [0, 200] },
-            },
-          },
+          // Authenticated REST responses must never be shared across users via Cache Storage.
           {
             urlPattern: /\.(?:png|jpg|jpeg|webp|gif|svg|avif)(?:\?.*)?$/i,
             handler: 'CacheFirst',

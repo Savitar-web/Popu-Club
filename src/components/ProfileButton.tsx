@@ -1,3 +1,4 @@
+import { hasSession, logout } from '../lib/auth'
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { Link, useNavigate, useLocation } from 'react-router-dom'
 import { Capacitor, registerPlugin } from '@capacitor/core'
@@ -166,7 +167,7 @@ export default function ProfileButton() {
 
   const loadUserData = () => {
     const guest = localStorage.getItem('guestMode') === 'true'
-    const hasUser = !!localStorage.getItem('currentUser')
+    const hasUser = hasSession()
     setIsGuest(guest || !hasUser)
 
     if (guest || !hasUser) {
@@ -296,17 +297,18 @@ export default function ProfileButton() {
     if (!supabase || isGuest) return
 
     let channel: ReturnType<typeof supabase.channel> | null = null
+    let cancelled = false
 
     ;(async () => {
       const {
         data: { user },
       } = await supabase.auth.getUser()
-      if (!user) return
+      if (!user || cancelled) return
       void registerClosedAppPush(user.id)
       void registerWebPush(user.id)
 
       channel = supabase
-        .channel('my-notifications')
+        .channel(`my-notifications:${user.id}`)
         .on(
           'postgres_changes',
           {
@@ -330,6 +332,7 @@ export default function ProfileButton() {
     })()
 
     return () => {
+      cancelled = true
       if (channel) supabase.removeChannel(channel)
     }
   }, [isGuest])
@@ -886,6 +889,10 @@ export default function ProfileButton() {
               >
                 Mi cuenta
               </Link>
+              <button type="button" onClick={async () => {
+                try { await logout() } catch { /* session cleared locally */ }
+                window.location.reload()
+              }} style={{ width: '100%', marginTop: 10, padding: 10, border: '1px solid #999', borderRadius: 8, background: 'transparent', color: panelFg, cursor: 'pointer', fontFamily: 'inherit' }}>Cerrar sesión</button>
             </>
           )}
         </div>

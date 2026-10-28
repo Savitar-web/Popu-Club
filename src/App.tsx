@@ -1,3 +1,5 @@
+import { lazy, Suspense } from 'react'
+import { useAuth } from './lib/auth'
 import {
   HashRouter,
   BrowserRouter,
@@ -5,14 +7,14 @@ import {
   Route,
   Navigate,
 } from 'react-router-dom'
-import Home from './pages/Home'
-import Login from './pages/Login'
-import Profile from './pages/Profile'
-import Arcos from './pages/Arcos'
-import ComicDetail from './pages/ComicDetail'
-import ChapterReader from './pages/ChapterReader'
-import Admin from './pages/Admin'
-import Profiles from './pages/Profiles'
+const Home = lazy(() => import('./pages/Home'))
+const Login = lazy(() => import('./pages/Login'))
+const Profile = lazy(() => import('./pages/Profile'))
+const Arcos = lazy(() => import('./pages/Arcos'))
+const ComicDetail = lazy(() => import('./pages/ComicDetail'))
+const ChapterReader = lazy(() => import('./pages/ChapterReader'))
+const Admin = lazy(() => import('./pages/Admin'))
+const Profiles = lazy(() => import('./pages/Profiles'))
 
 function useHashRouter() {
   if (typeof window === 'undefined') return false
@@ -26,7 +28,9 @@ function useHashRouter() {
 }
 
 function AppRoutes() {
-  const isLoggedIn = !!localStorage.getItem('currentUser')
+  const { ready, session, recovery } = useAuth()
+  const isLoggedIn = Boolean(session)
+  if (!ready) return <p role="status" style={{ padding: 32, textAlign: 'center' }}>Cargando sesión…</p>
 
   return (
     <Routes>
@@ -36,7 +40,7 @@ function AppRoutes() {
       />
       <Route
         path="/login"
-        element={isLoggedIn ? <Navigate to="/home" replace /> : <Login />}
+        element={isLoggedIn && !recovery ? <Navigate to="/home" replace /> : <Login />}
       />
       <Route path="/profiles/:userId" element={<Profiles />} />
       <Route path="/home" element={<Home />} />
@@ -59,7 +63,7 @@ export default function App() {
 
   return (
     <Router>
-      <AppRoutes />
+      <Suspense fallback={<p role="status" style={{ padding: 32, textAlign: 'center' }}>Cargando…</p>}><AppRoutes /></Suspense>
     </Router>
   )
 }

@@ -1,7 +1,9 @@
 {
   "name": "popu-club",
   "private": true,
-  "version": "1.0.0",
+  "description": "Plataforma de cómics Popu-Club de Cherry Bless",
+  "author": "Cherry Bless",
+  "version": "1.0.1",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
@@ -11,7 +13,8 @@
     "preview": "vite preview",
     "electron:build": "npm run build && electron-builder --win portable nsis",
     "electron:build:linux": "npm run build && electron-builder --linux AppImage",
-    "electron:build:mac": "npm run build && electron-builder --mac dmg"
+    "electron:build:mac": "npm run build && electron-builder --mac dmg",
+    "test": "node --test tests/*.test.mjs"
   },
   "dependencies": {
     "@capacitor/android": "^8.5.2",
@@ -40,8 +43,9 @@
   "build": {
     "appId": "com.cherrybless.popuclub",
     "productName": "Popu-Club",
+    "electronDist": "node_modules/electron/dist",
     "directories": {
-      "output": "electron-dist"
+      "output": "electron-dist/${version}"
     },
     "files": [
       "dist/**/*",

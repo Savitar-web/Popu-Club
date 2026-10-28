@@ -18,7 +18,18 @@ const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined
 export const isSupabaseConfigured = Boolean(url && anonKey)
 
 export const supabase = isSupabaseConfigured
-  ? createClient(url!, anonKey!)
+  ? createClient(url!, anonKey!, {
+      auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
+      global: { fetch: async (input, init) => {
+        const controller = new AbortController()
+        const onAbort = () => controller.abort(init?.signal?.reason)
+        const timer = setTimeout(() => controller.abort(new DOMException('La petición tardó demasiado', 'TimeoutError')), 20000)
+        if (init?.signal?.aborted) onAbort()
+        else init?.signal?.addEventListener('abort', onAbort, { once: true })
+        try { return await fetch(input, { ...init, signal: controller.signal }) }
+        finally { clearTimeout(timer); init?.signal?.removeEventListener('abort', onAbort) }
+      } },
+    })
   : (null as any)
 
 /** Lee el perfil del usuario logueado (incluye role: user | admin) */

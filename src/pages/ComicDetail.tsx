@@ -1,3 +1,5 @@
+import { chapterCounts } from '../lib/data'
+import { hasSession, useAuth } from '../lib/auth'
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useParams, useNavigate } from 'react-router-dom'
 import Header from '../components/Header'
@@ -41,12 +43,13 @@ function statusEs(s?: string | null) {
 }
 
 function isGuestUser() {
-  return localStorage.getItem('guestMode') === 'true' || !localStorage.getItem('currentUser')
+  return !hasSession()
 }
 
 export default function ComicDetail() {
   const { comicId } = useParams()
   const navigate = useNavigate()
+  const { session } = useAuth()
   const [comic, setComic] = useState<Comic | null>(null)
   const [chapters, setChapters] = useState<Chapter[]>([])
   const [loading, setLoading] = useState(true)
@@ -58,7 +61,7 @@ export default function ComicDetail() {
 
   useEffect(() => {
     if (comicId) loadData(comicId)
-  }, [comicId])
+  }, [comicId, session?.user.id])
 
   const loadData = async (id: string) => {
     const cached = cacheGet<{
@@ -78,7 +81,7 @@ export default function ComicDetail() {
         }))
       )
       setChapters(chsLocal)
-      setLikedMap(cached.likedMap)
+      setLikedMap({})
       setTotals(cached.totals)
       setLoading(false)
     } else {
@@ -128,21 +131,16 @@ export default function ComicDetail() {
         tc = 0
       const liked: Record<string, boolean> = {}
 
+      const counts = await chapterCounts(list.map((ch) => ch.id))
+      if (user && list.length) {
+        const { data: myLikes, error: likesError } = await supabase.from('likes').select('chapter_id').eq('user_id', user.id).in('chapter_id', list.map((ch) => ch.id))
+        if (likesError) throw likesError
+        for (const like of myLikes || []) liked[like.chapter_id] = true
+      }
       for (const ch of list) {
-        const [{ count: cc }, { count: lc }, { count: vc }] = await Promise.all([
-          supabase.from('comments').select('*', { count: 'exact', head: true }).eq('chapter_id', ch.id),
-          supabase.from('likes').select('*', { count: 'exact', head: true }).eq('chapter_id', ch.id),
-          supabase.from('chapter_views').select('*', { count: 'exact', head: true }).eq('chapter_id', ch.id),
-        ])
-        if (user) {
-          const { data: ml } = await supabase
-            .from('likes')
-            .select('id')
-            .eq('chapter_id', ch.id)
-            .eq('user_id', user.id)
-            .maybeSingle()
-          liked[ch.id] = !!ml
-        }
+        const cc = counts.comments[ch.id] || 0
+        const lc = counts.likes[ch.id] || 0
+        const vc = counts.views[ch.id] || 0
         const row = {
           ...ch,
           comments_count: cc || 0,
@@ -224,7 +222,8 @@ export default function ComicDetail() {
     }
     const isLiked = likedMap[ch.id]
     if (isLiked) {
-      await supabase.from('likes').delete().eq('chapter_id', ch.id).eq('user_id', user.id)
+      const { error: deleteError } = await supabase.from('likes').delete().eq('chapter_id', ch.id).eq('user_id', user.id)
+      if (deleteError) { setError(deleteError.message); return }
       setLikedMap((m) => ({ ...m, [ch.id]: false }))
       setChapters((prev) =>
         prev.map((c) =>
@@ -240,6 +239,7 @@ export default function ComicDetail() {
         setError(insErr.message)
         return
       }
+      if (insErr?.code === '23505') { setLikedMap((m) => ({ ...m, [ch.id]: true })); return }
       setLikedMap((m) => ({ ...m, [ch.id]: true }))
       setChapters((prev) =>
         prev.map((c) => (c.id === ch.id ? { ...c, likes_count: (c.likes_count || 0) + 1 } : c))

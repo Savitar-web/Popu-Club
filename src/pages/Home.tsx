@@ -14,6 +14,7 @@ type Comic = {
   genre: string | null
   status: string | null
   is_featured?: boolean
+  recent_order?: number
   sort_order?: number
   created_at?: string
 }
@@ -38,11 +39,13 @@ export default function Home() {
   const [fullscreen, setFullscreen] = useState(false)
   const [err, setErr] = useState('')
   const touchStartX = useRef<number | null>(null)
+  const loadLock = useRef(false)
+  const lastLoaded = useRef(0)
 
   useEffect(() => {
     load()
     const onVis = () => {
-      if (document.visibilityState === 'visible') load()
+      if (document.visibilityState === 'visible' && Date.now() - lastLoaded.current > 30000) void load()
     }
     document.addEventListener('visibilitychange', onVis)
     return () => document.removeEventListener('visibilitychange', onVis)
@@ -57,14 +60,16 @@ export default function Home() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && fullscreen) setFullscreen(false)
-      if (e.key === 'ArrowLeft') prevSlide()
-      if (e.key === 'ArrowRight') nextSlide()
+      if (e.key === 'ArrowLeft' && slides.length) setSlideIdx((i) => (i - 1 + slides.length) % slides.length)
+      if (e.key === 'ArrowRight' && slides.length) setSlideIdx((i) => (i + 1) % slides.length)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [fullscreen, slides.length])
 
-  const load = async () => {
+  async function load() {
+    if (loadLock.current) return
+    loadLock.current = true
     const cached = cacheGet<{ featured: Comic[]; recent: Comic[]; slides: Slide[]; sliderOn: boolean }>('home')
     if (cached) {
       setFeatured(cached.featured)
@@ -83,12 +88,13 @@ export default function Home() {
     setErr('')
     if (!isSupabaseConfigured || !supabase) {
       setLoading(false)
+      loadLock.current = false
       return
     }
     try {
       const { data: all, error } = await supabase
         .from('comics')
-        .select('id, title, cover_url, banner_url, genre, status, is_featured, sort_order, created_at')
+        .select('id, title, cover_url, banner_url, genre, status, is_featured, sort_order, recent_order, created_at')
         .order('created_at', { ascending: false })
 
       if (error) {
@@ -96,7 +102,8 @@ export default function Home() {
         console.warn('comics load:', error)
       }
 
-      const list = (all as Comic[]) || []
+      if (error) throw error
+      const list = ((all as Comic[]) || []).sort((a, b) => (a.recent_order ?? 0) - (b.recent_order ?? 0) || (b.created_at || '').localeCompare(a.created_at || ''))
       // TODOS los arcos de la base de datos (sin filtrar por status)
       setFeatured(
         list
@@ -104,7 +111,6 @@ export default function Home() {
           .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
       )
       setRecent(list)
-      console.log('[Home] comics loaded:', list.length, list.map((c) => c.title))
 
       const { data: settings } = await supabase
         .from('site_settings')
@@ -136,6 +142,8 @@ export default function Home() {
     } catch {
       /* sin red: se queda lo cacheado */
     } finally {
+      loadLock.current = false
+      lastLoaded.current = Date.now()
       setLoading(false)
     }
   }
@@ -262,7 +270,7 @@ export default function Home() {
             <div className="featured-banner">
               {featured.map((c) => (
                 <Link key={c.id} to={`/comic/${c.id}`} className="feat-item">
-                  <img src={c.banner_url || c.cover_url || '/loguito.png'} alt={c.title} />
+                  <img src={c.banner_url || c.cover_url || '/loguito.png'} alt={c.title} loading="lazy" decoding="async" />
                   <div className="overlay">
                     <h3>{c.title}</h3>
                     <p>{c.genre ? c.genre : statusEs(c.status)}</p>
@@ -275,13 +283,13 @@ export default function Home() {
 
         <h2 className="section-title">📚 Recientes ({recent.length})</h2>
         {!loading && recent.length === 0 && (
-          <p className="empty">No hay arcos. Ejecuta FIX-LIKES-FINAL.sql y usa estado distinto de Borrador.</p>
+          <p className="empty">Todavía no hay arcos disponibles.</p>
         )}
         <div className="recent-grid">
           {recent.map((c) => (
             <Link key={c.id} to={`/comic/${c.id}`} className="recent-card">
               <div className="cover-box">
-                <img src={c.cover_url || '/loguito.png'} alt={c.title} />
+                <img src={c.cover_url || '/loguito.png'} alt={c.title} loading="lazy" decoding="async" />
               </div>
               <span className="title">{c.title}</span>
               <div className="badge-row">

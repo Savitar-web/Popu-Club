@@ -27,6 +27,7 @@ dist-ssr
 .env
 .env.local
 .env*
+!.env.example
 
 # Electron (no subir a Vercel)
 /electron-dist/
@@ -41,3 +42,12 @@ dist-ssr
 /android/app/build/
 /android/build/
 /ios/App/Pods/
+/work/
+/android/local.properties
+/android/.kotlin/
+/android/popu-club-keystore
+/android/keystore.properties
+*.jks
+*.keystore
+
+.env*
